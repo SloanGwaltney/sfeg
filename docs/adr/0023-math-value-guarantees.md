@@ -53,6 +53,6 @@ A `Direction3` type that guarantees a unit vector would be useful for raycasts a
 - Every engine API that stores math values in engine state must validate them. Missing a seam lets a non-finite value into the engine, so seams need tests.
 - Code can add two points or translate a direction without a compile error. Method names and docs carry the meaning instead of types.
 - No conversions between point and vector types.
-- The line between "invalid state" (guarded by a type) and "doesn't make sense" (not guarded) is the test for future guarantee types.
+- The line between "invalid state" (guarded by a type) and "doesn't make sense" (not guarded) is the test for future guarantee types. It is written up as the "Same Data, Different Meaning" rubric in [AGENTS.md](../../AGENTS.md), which also weighs how often a mistake is made, how hard it is to spot, and how much friction a guard adds.
 
 ## Notes
