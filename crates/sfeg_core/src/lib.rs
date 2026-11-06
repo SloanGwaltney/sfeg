@@ -5,10 +5,11 @@
 //! builds and tests on its own.
 //!
 //! Right now it holds the game state and advances it one fixed tick at a
-//! time with [`Core::tick`].
+//! time with [`Core::tick`], and provides the [`math`] types.
 
 mod core_loop;
 mod game_state;
+pub mod math;
 mod time;
 
 pub use core_loop::Core;

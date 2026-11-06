@@ -8,6 +8,12 @@ repository.workspace = true
 
 # The core must never depend on winit, wgpu, or any other platform library (ADR 0007).
 [dependencies]
+bytemuck = { version = "1.25.2", features = ["derive"] }
+glam = { version = "0.34.2", features = ["bytemuck"] }
+serde = { version = "1.0.229", features = ["derive"] }
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+ron = "0.12.3"

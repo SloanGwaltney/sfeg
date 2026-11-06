@@ -17,6 +17,23 @@ In SFEG, "easy" means explicit. The engine is easy to use because it is hard to 
 
 SFEG is open source and uses only dependencies with permissive licenses (MIT, Apache-2.0, BSD, zlib, and similar). No proprietary licenses, and no copyleft licenses (GPL, LGPL, AGPL, MPL), so anyone can use SFEG without legal ambiguity. This rule covers code. Fonts may also use the SIL Open Font License (OFL), since it does not affect the software that uses them; SFEG never modifies or subsets a font automatically, because the OFL treats that as creating a modified version.
 
+# Design Principles
+
+## Same Data, Different Meaning
+
+Some values have the same data but different meanings, such as points and vectors, local and world space, or meters and pixels. Separate types can stop them being mixed up, but they add conversions everywhere the values meet.
+
+Types guard what the engine relies on. Names and docs guard what only the reader relies on.
+
+- **Use separate types when mixing the values breaks a rule the engine relies on.** That is invalid state, such as an un-normalized rotation.
+- **Otherwise, weigh the guard against its cost:**
+  - How often is the mistake made?
+  - How hard is it to spot when it is? Plausible-looking wrong answers are worse than crashes.
+  - How much friction does the guard add to correct code?
+- **If the guard doesn't pay for itself, share one type** and carry the meaning in method names and docs, such as `transform_point` and `transform_vector`.
+
+A value that doesn't make sense is not automatically harmless. It may not break the engine, but it can still cause game bugs, which is why this is a judgment call and not a free pass. See [0023](docs/adr/0023-math-value-guarantees.md) for an example.
+
 # Working with the User
 
 ## Skill Files
