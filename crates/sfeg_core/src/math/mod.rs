@@ -21,16 +21,6 @@ pub use rotation::{Rotation, RotationError};
 pub use vector2::Vector2;
 pub use vector3::Vector3;
 
-/// How far a squared length may be from 1 and still count as normalized.
-///
-/// This allows for f32 rounding, such as in values written by hand like
-/// `0.7071`. A value inside the tolerance is kept as given, never adjusted.
-pub const NORMALIZED_TOLERANCE: f32 = 2e-4;
-
-fn is_normalized(length_squared: f32) -> bool {
-    (length_squared - 1.0).abs() <= NORMALIZED_TOLERANCE
-}
-
 #[cfg(test)]
 pub(crate) fn assert_close(a: f32, b: f32) {
     assert!((a - b).abs() < 1e-5, "{a} is not close to {b}");

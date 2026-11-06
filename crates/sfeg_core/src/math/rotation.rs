@@ -4,7 +4,7 @@ use std::fmt;
 use bytemuck::NoUninit;
 use serde::{Deserialize, Serialize};
 
-use super::{Vector3, is_normalized};
+use super::Vector3;
 
 /// A 3D rotation, stored as a unit quaternion.
 ///
@@ -30,8 +30,16 @@ impl Rotation {
     /// No rotation.
     pub const IDENTITY: Rotation = Rotation(glam::Quat::IDENTITY);
 
+    /// How far a squared length may be from 1 and still count as normalized.
+    ///
+    /// f32 can rarely store a length of exactly 1, so values that are
+    /// mathematically normalized, or typed by hand like `0.7071`, are slightly
+    /// off. A value inside the tolerance is kept as given, never adjusted.
+    /// Applies to quaternions and rotation axes.
+    pub const NORMALIZED_TOLERANCE: f32 = 2e-4;
+
     /// Creates a rotation from quaternion components, which must already be
-    /// normalized (within [`super::NORMALIZED_TOLERANCE`]).
+    /// normalized (within [`Rotation::NORMALIZED_TOLERANCE`]).
     ///
     /// # Errors
     ///
@@ -69,7 +77,7 @@ impl Rotation {
     }
 
     /// A rotation of `radians` around `axis`, which must already be
-    /// normalized (within [`super::NORMALIZED_TOLERANCE`]).
+    /// normalized (within [`Rotation::NORMALIZED_TOLERANCE`]).
     ///
     /// Positive angles turn counterclockwise when looking down the axis
     /// toward the origin (right-hand rule).
@@ -149,6 +157,10 @@ impl Rotation {
     pub fn then(self, next: Rotation) -> Rotation {
         Rotation((next.0 * self.0).normalize())
     }
+}
+
+fn is_normalized(length_squared: f32) -> bool {
+    (length_squared - 1.0).abs() <= Rotation::NORMALIZED_TOLERANCE
 }
 
 /// Two rotations are equal when they turn things the same way.
