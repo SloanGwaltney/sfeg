@@ -74,3 +74,5 @@ Mod files can't be checked at compile time, but the game's own data can. The gam
 - How the game's own files are checked at compile time, how mod files are loaded at runtime, and how mod files layer over base files are left to the resource loading ADR.
 
 ## Notes
+
+- 2026-11-06: The scripting language and how scripts plug in are decided in [0021](0021-scripting-with-luau.md). It refines the sketch in this ADR's Context: registered types stay Rust, scripts implement hook interfaces that a game defines, and there is no `draw` hook. The engine ships a generic scripted object for games that want broad modding.

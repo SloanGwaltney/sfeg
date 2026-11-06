@@ -154,3 +154,5 @@ Each kind of asset needs a way to decode, validate, reload, and possibly upload 
 - If scripted mods arrive, the type names they register will need the same namespacing. That is left to the scripting ADR.
 
 ## Notes
+
+- 2026-11-06: "Hot reloading code is ruled out" refers to Rust code. [0021](0021-scripting-with-luau.md) adds hot reload for mod scripts when the game opts in. Scripts don't register type names, but the behaviors, input actions, and collision layers that mods declare are namespaced as this ADR describes.

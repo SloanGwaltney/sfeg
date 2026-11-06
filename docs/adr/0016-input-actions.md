@@ -93,3 +93,5 @@ When the window loses focus, it stops receiving key-release events, so a key hel
 - How player rebinds are stored, and which platform requests `FrameContext` may issue (see 0008), are left to implementation.
 
 ## Notes
+
+- 2026-11-06: [0021](0021-scripting-with-luau.md) lets mods declare namespaced input actions with default bindings in their manifest. They follow this ADR's rules and appear in the player's rebinding screen.

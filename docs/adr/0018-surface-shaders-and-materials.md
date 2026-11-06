@@ -103,3 +103,5 @@ Mods can't add generated Rust, so they can't add new material types through this
 - Mod shaders can stall the GPU, which the engine can't fully prevent. The docs must say so.
 
 ## Notes
+
+- 2026-11-06: [0021](0021-scripting-with-luau.md) commits SFEG to letting mods add material types and records the planned path: a WGSL surface function and a RON parameter schema, validated by naga at load. Only the timing is open. Until then, this ADR's limit stands.

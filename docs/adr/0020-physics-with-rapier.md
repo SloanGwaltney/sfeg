@@ -154,3 +154,5 @@ Rapier is tuned for meters: its tolerances and sleep thresholds assume objects a
 - Projected UI occlusion from 0019 can now be built on raycasts.
 
 ## Notes
+
+- 2026-11-06: [0021](0021-scripting-with-luau.md) lets mods declare collision layers in the game's free slots, and edit interactions between game layers if the game opts in.
