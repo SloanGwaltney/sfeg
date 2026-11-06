@@ -1,4 +1,4 @@
-//! The game built on SFEG.
+//! A demo game built on SFEG.
 //!
 //! For now it runs headless: it ticks the engine a few times and greets
 //! each tick.

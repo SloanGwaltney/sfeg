@@ -1,6 +1,6 @@
 [package]
-name = "sfeg_game"
-description = "The game built on SFEG to demonstrate the engine."
+name = "demo"
+description = "A demo game built on SFEG to show what the engine can do."
 version.workspace = true
 edition.workspace = true
 repository.workspace = true
