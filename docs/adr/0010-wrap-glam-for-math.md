@@ -49,3 +49,4 @@ Wrapping every type means forwarding constructors, methods, operators, and conve
 ## Notes
 
 - 2026-11-06: This ADR didn't decide between f32 and f64. [0022](0022-f32-math-and-integer-time.md) decides f32, with time counted in integer ticks.
+- 2026-11-06: [0023](0023-math-value-guarantees.md) decides which math types carry guarantees: plain vectors allow non-finite values (checked at engine seams), points and vectors share one type, and unit-direction types wait until needed.
