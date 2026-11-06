@@ -1,0 +1,14 @@
+[package]
+name = "sfeg_game"
+description = "The game built on SFEG to demonstrate the engine."
+version.workspace = true
+edition.workspace = true
+repository.workspace = true
+publish = false
+
+# Games depend on the `sfeg` facade only (ADR 0007).
+[dependencies]
+sfeg.workspace = true
+
+[lints]
+workspace = true

@@ -16,6 +16,13 @@ name = "sfeg_core"
 version = "0.1.0"
 
 [[package]]
+name = "sfeg_game"
+version = "0.1.0"
+dependencies = [
+ "sfeg",
+]
+
+[[package]]
 name = "sfeg_wgpu"
 version = "0.1.0"
 dependencies = [
