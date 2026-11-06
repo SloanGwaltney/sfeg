@@ -3,6 +3,7 @@ name = "sfeg"
 description = "SFEG: Safe, Fun, Easy Games. The crate games depend on."
 version.workspace = true
 edition.workspace = true
+license.workspace = true
 repository.workspace = true
 
 [dependencies]
