@@ -1,0 +1,15 @@
+[package]
+name = "demo"
+description = "A demo game built on SFEG to show what the engine can do."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+# Games depend on the `sfeg` facade only (ADR 0007).
+[dependencies]
+sfeg.workspace = true
+
+[lints]
+workspace = true

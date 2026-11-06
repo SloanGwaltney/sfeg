@@ -1,0 +1,15 @@
+[package]
+name = "sfeg_winit"
+description = "SFEG's windowed runner, built on winit."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+# winit is added when the runner opens a window (ADR 0007).
+[dependencies]
+sfeg_core.workspace = true
+sfeg_wgpu.workspace = true
+
+[lints]
+workspace = true
