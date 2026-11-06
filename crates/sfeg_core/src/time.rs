@@ -56,15 +56,18 @@ impl fmt::Display for TickRateError {
 impl Error for TickRateError {}
 
 /// Game time, counted in ticks (ADR 0022).
+///
+/// This is not real (wall-clock) time. It only moves forward when a tick
+/// runs, so a paused or slowed-down game has less game time than real time.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Time {
+pub struct GameTime {
     tick_count: u64,
     tick_rate: TickRate,
 }
 
-impl Time {
-    pub(crate) fn new(tick_rate: TickRate) -> Time {
-        Time {
+impl GameTime {
+    pub(crate) fn new(tick_rate: TickRate) -> GameTime {
+        GameTime {
             tick_count: 0,
             tick_rate,
         }
@@ -92,7 +95,7 @@ impl Time {
         self.tick_rate.dt()
     }
 
-    /// Game time in seconds, derived from [`Time::tick_count`].
+    /// Game time in seconds, derived from [`GameTime::tick_count`].
     pub fn elapsed_seconds(&self) -> f64 {
         self.tick_count as f64 / f64::from(self.tick_rate.hz())
     }
@@ -115,11 +118,11 @@ mod tests {
 
     #[test]
     fn elapsed_seconds_is_derived_from_ticks() {
-        let mut time = Time::new(TickRate::DEFAULT);
+        let mut game_time = GameTime::new(TickRate::DEFAULT);
         for _ in 0..90 {
-            time.advance_one_tick();
+            game_time.advance_one_tick();
         }
-        assert_eq!(time.tick_count(), 90);
-        assert_eq!(time.elapsed_seconds(), 1.5);
+        assert_eq!(game_time.tick_count(), 90);
+        assert_eq!(game_time.elapsed_seconds(), 1.5);
     }
 }

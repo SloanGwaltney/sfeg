@@ -13,11 +13,11 @@ struct HelloGame {
 
 impl GameState for HelloGame {
     fn tick(&mut self, ctx: &mut TickContext) {
-        let time = ctx.time();
+        let game_time = ctx.game_time();
         let greeting = format!(
             "Hello from tick {} ({:.3}s)",
-            time.tick_count(),
-            time.elapsed_seconds()
+            game_time.tick_count(),
+            game_time.elapsed_seconds()
         );
         println!("{greeting}");
         self.greetings.push(greeting);

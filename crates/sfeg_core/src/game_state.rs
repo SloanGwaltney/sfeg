@@ -1,4 +1,4 @@
-use crate::time::Time;
+use crate::time::GameTime;
 
 /// The game-wide state: one game-defined struct that lasts for the whole run
 /// (ADR 0012).
@@ -18,16 +18,16 @@ impl GameState for () {}
 /// For now this is only game time. It grows to hold the command queue,
 /// tick input, and access to other objects (ADR 0008).
 pub struct TickContext<'a> {
-    time: &'a Time,
+    game_time: &'a GameTime,
 }
 
 impl<'a> TickContext<'a> {
-    pub(crate) fn new(time: &'a Time) -> TickContext<'a> {
-        TickContext { time }
+    pub(crate) fn new(game_time: &'a GameTime) -> TickContext<'a> {
+        TickContext { game_time }
     }
 
     /// Game time at the start of this tick.
-    pub fn time(&self) -> &Time {
-        self.time
+    pub fn game_time(&self) -> &GameTime {
+        self.game_time
     }
 }

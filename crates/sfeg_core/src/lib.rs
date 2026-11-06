@@ -13,4 +13,4 @@ mod time;
 
 pub use core_loop::Core;
 pub use game_state::{GameState, TickContext};
-pub use time::{TickRate, TickRateError, Time};
+pub use time::{GameTime, TickRate, TickRateError};

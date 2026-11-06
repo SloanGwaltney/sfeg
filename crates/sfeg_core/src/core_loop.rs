@@ -1,5 +1,5 @@
 use crate::game_state::{GameState, TickContext};
-use crate::time::{TickRate, Time};
+use crate::time::{GameTime, TickRate};
 
 /// The window-free core that owns the game and advances it (ADR 0006).
 ///
@@ -7,7 +7,7 @@ use crate::time::{TickRate, Time};
 /// windowed runner will drive it the same way.
 pub struct Core<G: GameState> {
     game_state: G,
-    time: Time,
+    game_time: GameTime,
 }
 
 impl<G: GameState> Core<G> {
@@ -15,20 +15,20 @@ impl<G: GameState> Core<G> {
     pub fn new(game_state: G, tick_rate: TickRate) -> Core<G> {
         Core {
             game_state,
-            time: Time::new(tick_rate),
+            game_time: GameTime::new(tick_rate),
         }
     }
 
     /// Runs exactly one tick (ADR 0008).
     pub fn tick(&mut self) {
-        let mut ctx = TickContext::new(&self.time);
+        let mut ctx = TickContext::new(&self.game_time);
         self.game_state.tick(&mut ctx);
-        self.time.advance_one_tick();
+        self.game_time.advance_one_tick();
     }
 
     /// Game time so far.
-    pub fn time(&self) -> &Time {
-        &self.time
+    pub fn game_time(&self) -> &GameTime {
+        &self.game_time
     }
 
     /// The game state, read-only.
@@ -48,7 +48,7 @@ mod tests {
 
     impl GameState for RecordTicks {
         fn tick(&mut self, ctx: &mut TickContext) {
-            self.seen.push(ctx.time().tick_count());
+            self.seen.push(ctx.game_time().tick_count());
         }
     }
 
@@ -59,7 +59,7 @@ mod tests {
             core.tick();
         }
         assert_eq!(core.game_state().seen, vec![0, 1, 2]);
-        assert_eq!(core.time().tick_count(), 3);
+        assert_eq!(core.game_time().tick_count(), 3);
     }
 
     #[test]
@@ -68,6 +68,6 @@ mod tests {
         for _ in 0..60 {
             core.tick();
         }
-        assert_eq!(core.time().elapsed_seconds(), 1.0);
+        assert_eq!(core.game_time().elapsed_seconds(), 1.0);
     }
 }
