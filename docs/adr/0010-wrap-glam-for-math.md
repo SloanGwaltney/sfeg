@@ -47,3 +47,5 @@ Wrapping every type means forwarding constructors, methods, operators, and conve
 - Which types get guarantees, such as rotations, directions, or points vs. vectors, is decided as the API is built. The transform types themselves belong to the object hierarchy ADR.
 
 ## Notes
+
+- 2026-11-06: This ADR didn't decide between f32 and f64. [0022](0022-f32-math-and-integer-time.md) decides f32, with time counted in integer ticks.
