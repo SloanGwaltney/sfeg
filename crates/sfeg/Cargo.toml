@@ -1,0 +1,14 @@
+[package]
+name = "sfeg"
+description = "SFEG: Safe, Fun, Easy Games. The crate games depend on."
+version.workspace = true
+edition.workspace = true
+repository.workspace = true
+
+[dependencies]
+sfeg_core.workspace = true
+sfeg_wgpu.workspace = true
+sfeg_winit.workspace = true
+
+[lints]
+workspace = true

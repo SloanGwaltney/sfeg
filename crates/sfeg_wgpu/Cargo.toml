@@ -1,0 +1,13 @@
+[package]
+name = "sfeg_wgpu"
+description = "SFEG's renderer, built on wgpu."
+version.workspace = true
+edition.workspace = true
+repository.workspace = true
+
+# wgpu is added when the renderer has something to draw. Never depend on winit (ADR 0007).
+[dependencies]
+sfeg_core.workspace = true
+
+[lints]
+workspace = true

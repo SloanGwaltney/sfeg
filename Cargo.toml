@@ -1,0 +1,23 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/sfeg_core",
+    "crates/sfeg_wgpu",
+    "crates/sfeg_winit",
+    "crates/sfeg",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+repository = "https://github.com/SloanGwaltney/sfeg"
+
+[workspace.dependencies]
+sfeg_core = { path = "crates/sfeg_core" }
+sfeg_wgpu = { path = "crates/sfeg_wgpu" }
+sfeg_winit = { path = "crates/sfeg_winit" }
+sfeg = { path = "crates/sfeg" }
+
+# SFEG's own code is entirely safe Rust (see AGENTS.md).
+[workspace.lints.rust]
+unsafe_code = "forbid"

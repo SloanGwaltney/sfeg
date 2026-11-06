@@ -1,0 +1,12 @@
+[package]
+name = "sfeg_core"
+description = "SFEG's window-free core: game state, ticks, and time."
+version.workspace = true
+edition.workspace = true
+repository.workspace = true
+
+# The core must never depend on winit, wgpu, or any other platform library (ADR 0007).
+[dependencies]
+
+[lints]
+workspace = true
