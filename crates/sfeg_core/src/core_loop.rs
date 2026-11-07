@@ -2,7 +2,8 @@ use std::time::Duration;
 
 use crate::frame::FrameContext;
 use crate::game_state::{GameState, GameStateTickContext};
-use crate::scene::Scene;
+use crate::platform::DrawList;
+use crate::scene::{Blend, Scene, TransformInterpolation};
 use crate::time::{GameTime, MaxTicksPerFrame, TickRate};
 
 /// Real time is owed in units of 1 / (10^9 * tick rate) seconds, so one
@@ -26,6 +27,10 @@ pub struct Core<G: GameState> {
     /// Real time that [`Core::advance`] hasn't turned into ticks yet, in
     /// units of [`UNITS_PER_TICK`]. Always less than one tick between calls.
     owed_real_time: u128,
+    /// How far real time is past the last tick, as of the last
+    /// [`Core::advance`]. Zero right after a [`Core::tick`].
+    interpolation_factor: f32,
+    transform_interpolation: TransformInterpolation,
 }
 
 impl<G: GameState> Core<G> {
@@ -48,6 +53,8 @@ impl<G: GameState> Core<G> {
             game_time: GameTime::new(tick_rate),
             max_ticks_per_frame,
             owed_real_time: 0,
+            interpolation_factor: 0.0,
+            transform_interpolation: TransformInterpolation::default(),
         }
     }
 
@@ -86,6 +93,7 @@ impl<G: GameState> Core<G> {
 
         let interpolation_factor =
             ((self.owed_real_time as f64 / UNITS_PER_TICK as f64) as f32).min(LARGEST_FACTOR);
+        self.interpolation_factor = interpolation_factor;
         let mut ctx =
             FrameContext::new(&self.game_time, real_dt.as_secs_f32(), interpolation_factor);
         self.game_state.frame(&mut ctx);
@@ -104,6 +112,40 @@ impl<G: GameState> Core<G> {
         self.game_state.tick(&mut ctx);
         self.current_scene.tick(&self.game_time);
         self.game_time.advance_one_tick();
+        // No real time has passed since this tick.
+        self.interpolation_factor = 0.0;
+    }
+
+    /// Runs every object's `draw` and returns what they drew, seen from the
+    /// current scene's active camera (ADR 0008, 0024). The runner calls it
+    /// after [`Core::advance`], and tests can call it to check what a frame
+    /// would show.
+    ///
+    /// Transforms are blended by the interpolation factor of the last
+    /// [`Core::advance`], unless interpolation is
+    /// [disabled](TransformInterpolation::Disabled). Right after a
+    /// [`Core::tick`] the factor is 0, which draws the transforms from
+    /// before that tick.
+    ///
+    /// If the scene has no active camera, nothing is drawn and an error is
+    /// logged, once each time the scene loses its camera.
+    pub fn draw(&mut self) -> DrawList {
+        let blend = match self.transform_interpolation {
+            TransformInterpolation::Enabled => Blend::Between(self.interpolation_factor),
+            TransformInterpolation::Disabled => Blend::Current,
+        };
+        self.current_scene.draw(blend, self.interpolation_factor)
+    }
+
+    /// Turns transform interpolation on or off for every scene. It is
+    /// [enabled](TransformInterpolation::Enabled) unless set otherwise.
+    pub fn set_transform_interpolation(&mut self, transform_interpolation: TransformInterpolation) {
+        self.transform_interpolation = transform_interpolation;
+    }
+
+    /// Whether transforms are interpolated when drawing.
+    pub fn transform_interpolation(&self) -> TransformInterpolation {
+        self.transform_interpolation
     }
 
     /// Game time so far.
@@ -306,6 +348,61 @@ mod tests {
         let summary = core.advance(Duration::ZERO);
         assert_eq!(summary.ticks_run(), 0);
         assert_eq!(*log.borrow(), ["game state: tick 0 real_dt 0 factor 0"]);
+    }
+
+    /// Moves one unit along +x each tick and draws a cube.
+    struct DrawnWalker;
+
+    impl GameObject for DrawnWalker {
+        fn tick(&mut self, ctx: &mut crate::TickContext) {
+            let position = ctx.local().position() + crate::math::Vector3::UNIT_X;
+            ctx.local_mut().set_position(position).unwrap();
+        }
+
+        fn draw(&self, ctx: &mut crate::DrawContext) {
+            ctx.draw_cube(crate::Color::WHITE);
+        }
+    }
+
+    fn core_with_walker() -> Core<()> {
+        let mut core = new_core(());
+        let scene = core.current_scene_mut();
+        scene
+            .spawn_immediate(DrawnWalker, Parent::Root, Transform::IDENTITY)
+            .unwrap();
+        let camera = scene
+            .spawn_immediate(DrawnWalker, Parent::Root, Transform::IDENTITY)
+            .unwrap();
+        let perspective = crate::Perspective::new(1.0, 0.1, 100.0).unwrap();
+        scene.set_active_camera(camera, perspective).unwrap();
+        core
+    }
+
+    fn first_drawn_x(core: &mut Core<()>) -> f32 {
+        match core.draw().draw_commands()[0] {
+            crate::platform::DrawCommand::FlatMesh { world_matrix, .. } => {
+                world_matrix.translation().x()
+            }
+        }
+    }
+
+    #[test]
+    fn draw_uses_the_last_advances_interpolation_factor() {
+        let mut core = core_with_walker();
+        // 25 ms is 1.5 ticks at 60 Hz: one tick from 0 to 1, then halfway.
+        core.advance(Duration::from_millis(25));
+        assert_eq!(first_drawn_x(&mut core), 0.5);
+        // A plain tick leaves no real time past it.
+        core.tick();
+        assert_eq!(first_drawn_x(&mut core), 1.0);
+    }
+
+    #[test]
+    fn disabled_interpolation_draws_the_last_tick() {
+        let mut core = core_with_walker();
+        core.set_transform_interpolation(TransformInterpolation::Disabled);
+        core.advance(Duration::from_millis(25));
+        assert_eq!(first_drawn_x(&mut core), 1.0);
     }
 
     #[test]

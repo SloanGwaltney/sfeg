@@ -82,6 +82,10 @@ impl Matrix4 {
         Matrix4(m)
     }
 
+    pub(crate) fn to_glam(self) -> glam::Mat4 {
+        self.0
+    }
+
     /// Whether a zero scale flattens space, so the matrix has no inverse
     /// and no single rotation.
     pub(crate) fn is_flat(self) -> bool {

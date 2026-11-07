@@ -119,6 +119,25 @@ impl Transform {
         Ok(())
     }
 
+    /// Blends from `previous` at `t = 0.0` toward `current` at `t = 1.0`:
+    /// position and scale linearly, rotation along the shorter arc
+    /// (ADR 0013).
+    ///
+    /// If blending overflows to a non-finite value, the result is
+    /// `current`.
+    pub(crate) fn interpolate(previous: &Transform, current: &Transform, t: f32) -> Transform {
+        let rotation = previous
+            .rotation
+            .slerp(current.rotation, t)
+            .unwrap_or(current.rotation);
+        Transform::new(
+            previous.position.lerp(current.position, t),
+            rotation,
+            previous.scale.lerp(current.scale, t),
+        )
+        .unwrap_or(*current)
+    }
+
     /// The matrix that scales, then rotates, then moves to the position.
     pub fn to_matrix(&self) -> Matrix4 {
         Matrix4::from_glam(glam::Mat4::from_scale_rotation_translation(

@@ -1,5 +1,6 @@
 use std::any::Any;
 
+use crate::draw::DrawContext;
 use crate::frame::FrameContext;
 use crate::scene::TickContext;
 
@@ -31,6 +32,16 @@ pub trait GameObject: Any {
     /// it, so gameplay fields changed here would make windowed and headless
     /// runs differ. Change the game in [`GameObject::tick`] instead.
     fn frame(&mut self, ctx: &mut FrameContext) {
+        let _ = ctx;
+    }
+
+    /// Records what the object looks like, after every object's `frame`
+    /// (ADR 0008).
+    ///
+    /// It is read-only, so the engine may call it any number of times per
+    /// frame, or not at all, such as in headless runs. It isn't called
+    /// while the scene has no active camera (ADR 0024).
+    fn draw(&self, ctx: &mut DrawContext) {
         let _ = ctx;
     }
 }

@@ -4,17 +4,23 @@
 //! (ADR 0007). It must never depend on winit, so the runner hands it a
 //! window through the `raw-window-handle` traits.
 //!
-//! There are no draw commands yet, so each frame only clears the window to
-//! [`PLACEHOLDER_CLEAR_COLOR`].
+//! Each frame clears the window to [`PLACEHOLDER_CLEAR_COLOR`], then draws
+//! the core's [`DrawList`] from its camera.
+
+mod flat_mesh;
 
 use std::error::Error;
 use std::fmt;
+use std::num::NonZeroU32;
 use std::sync::Arc;
 
+use sfeg_core::platform::DrawList;
 use wgpu::rwh::{HasDisplayHandle, HasWindowHandle};
 
-/// The color every frame is cleared to, until draw commands exist and
-/// the game can choose its own. A dark blue-gray, in linear color.
+use crate::flat_mesh::{DEPTH_FORMAT, FlatMeshPipeline};
+
+/// The color every frame is cleared to, until the game can choose its own.
+/// A dark blue-gray, in linear color.
 pub const PLACEHOLDER_CLEAR_COLOR: wgpu::Color = wgpu::Color {
     r: 0.02,
     g: 0.03,
@@ -46,6 +52,9 @@ pub struct Renderer {
     queue: wgpu::Queue,
     config: wgpu::SurfaceConfiguration,
     instance: wgpu::Instance,
+    /// Matches the surface's size. `None` while the window has no area.
+    depth_view: Option<wgpu::TextureView>,
+    flat_meshes: FlatMeshPipeline,
 }
 
 impl Renderer {
@@ -114,7 +123,8 @@ impl Renderer {
             view_formats: vec![],
         };
 
-        let renderer = Renderer {
+        let flat_meshes = FlatMeshPipeline::new(&device, format);
+        let mut renderer = Renderer {
             window,
             surface,
             adapter,
@@ -122,6 +132,8 @@ impl Renderer {
             queue,
             config,
             instance,
+            depth_view: None,
+            flat_meshes,
         };
         renderer.configure_surface();
         Ok(renderer)
@@ -136,12 +148,13 @@ impl Renderer {
         self.configure_surface();
     }
 
-    /// Draws one frame and presents it.
+    /// Draws `draw_list` as one frame and presents it.
     ///
+    /// A draw list without a camera only clears the window (ADR 0024).
     /// Frames the platform can't take right now, such as while the window
     /// is hidden, are skipped. Problems that fix themselves, such as an
     /// outdated surface after a resize, are fixed for the next frame.
-    pub fn render_frame(&mut self) {
+    pub fn render_frame(&mut self, draw_list: &DrawList) {
         if !self.has_area() {
             return;
         }
@@ -149,7 +162,7 @@ impl Renderer {
             wgpu::CurrentSurfaceTexture::Success(frame) => frame,
             wgpu::CurrentSurfaceTexture::Suboptimal(frame) => {
                 // Draw this one, then match the surface for the next.
-                self.draw(frame);
+                self.draw(frame, draw_list);
                 self.configure_surface();
                 return;
             }
@@ -171,10 +184,21 @@ impl Renderer {
                 return;
             }
         };
-        self.draw(frame);
+        self.draw(frame, draw_list);
     }
 
-    fn draw(&self, frame: wgpu::SurfaceTexture) {
+    fn draw(&mut self, frame: wgpu::SurfaceTexture, draw_list: &DrawList) {
+        let (Some(width_px), Some(height_px), Some(depth_view)) = (
+            NonZeroU32::new(self.config.width),
+            NonZeroU32::new(self.config.height),
+            &self.depth_view,
+        ) else {
+            // Only reached with an area, which configuring gave a depth
+            // buffer.
+            return;
+        };
+        self.flat_meshes
+            .prepare(&self.device, &self.queue, draw_list, width_px, height_px);
         let view = frame
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
@@ -183,9 +207,8 @@ impl Renderer {
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("sfeg frame"),
             });
-        // The pass only clears. It ends when dropped, before submitting.
-        drop(encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-            label: Some("sfeg clear"),
+        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("sfeg world"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                 view: &view,
                 depth_slice: None,
@@ -195,8 +218,20 @@ impl Renderer {
                     store: wgpu::StoreOp::Store,
                 },
             })],
+            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                view: depth_view,
+                depth_ops: Some(wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(1.0),
+                    // Nothing reads depth after this pass.
+                    store: wgpu::StoreOp::Discard,
+                }),
+                stencil_ops: None,
+            }),
             ..Default::default()
-        }));
+        });
+        self.flat_meshes.draw(&mut pass);
+        // The pass must end before submitting.
+        drop(pass);
         self.queue.submit([encoder.finish()]);
         self.queue.present(frame);
     }
@@ -205,10 +240,27 @@ impl Renderer {
         self.config.width > 0 && self.config.height > 0
     }
 
-    fn configure_surface(&self) {
-        if self.has_area() {
-            self.surface.configure(&self.device, &self.config);
+    fn configure_surface(&mut self) {
+        if !self.has_area() {
+            self.depth_view = None;
+            return;
         }
+        self.surface.configure(&self.device, &self.config);
+        let depth = self.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("sfeg depth"),
+            size: wgpu::Extent3d {
+                width: self.config.width,
+                height: self.config.height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: DEPTH_FORMAT,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            view_formats: &[],
+        });
+        self.depth_view = Some(depth.create_view(&wgpu::TextureViewDescriptor::default()));
     }
 
     fn recreate_surface(&mut self) {
