@@ -1,5 +1,6 @@
 use std::any::Any;
 
+use crate::frame::FrameContext;
 use crate::scene::TickContext;
 
 /// A thing in a scene, such as a player, an enemy, or a door (ADR 0004).
@@ -20,6 +21,16 @@ pub trait GameObject: Any {
     /// `&mut self`. Its transform stays in the scene and is reachable
     /// through the context.
     fn tick(&mut self, ctx: &mut TickContext) {
+        let _ = ctx;
+    }
+
+    /// Runs once per rendered frame, after that frame's ticks, and only
+    /// updates presentation (ADR 0008).
+    ///
+    /// Headless runs that call [`Core::tick`](crate::Core::tick) never run
+    /// it, so gameplay fields changed here would make windowed and headless
+    /// runs differ. Change the game in [`GameObject::tick`] instead.
+    fn frame(&mut self, ctx: &mut FrameContext) {
         let _ = ctx;
     }
 }

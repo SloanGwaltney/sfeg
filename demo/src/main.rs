@@ -5,7 +5,8 @@
 
 use sfeg::math::{Transform, Vector3};
 use sfeg::{
-    Core, GameObject, GameState, GameStateTickContext, Parent, Scene, TickContext, TickRate,
+    Core, GameObject, GameState, GameStateTickContext, MaxTicksPerFrame, Parent, Scene,
+    TickContext, TickRate,
 };
 
 /// The game-wide state.
@@ -61,7 +62,12 @@ fn setup() -> (Core<HelloGame>, sfeg::Handle<Walker>, sfeg::Handle<Hat>) {
     let hat = scene
         .spawn_immediate(Hat, walker, on_head)
         .expect("the walker was just spawned");
-    let core = Core::new(HelloGame::default(), scene, TickRate::DEFAULT);
+    let core = Core::new(
+        HelloGame::default(),
+        scene,
+        TickRate::DEFAULT,
+        MaxTicksPerFrame::DEFAULT,
+    );
     (core, walker, hat)
 }
 

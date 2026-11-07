@@ -5,10 +5,11 @@
 //! builds and tests on its own.
 //!
 //! Right now it holds the game state and one [`Scene`] of game objects,
-//! advances them one fixed tick at a time with [`Core::tick`], and
-//! provides the [`math`] types.
+//! advances them one fixed tick at a time with [`Core::tick`] or by real
+//! elapsed time with [`Core::advance`], and provides the [`math`] types.
 
 mod core_loop;
+mod frame;
 mod game_object;
 mod game_state;
 mod handle;
@@ -16,9 +17,10 @@ pub mod math;
 mod scene;
 mod time;
 
-pub use core_loop::Core;
+pub use core_loop::{AdvanceSummary, Core};
+pub use frame::FrameContext;
 pub use game_object::GameObject;
 pub use game_state::{GameState, GameStateTickContext};
 pub use handle::{Handle, ObjectHandle};
 pub use scene::{HierarchyError, Parent, Scene, TickContext, TypedHandleError};
-pub use time::{GameTime, TickRate, TickRateError};
+pub use time::{GameTime, MaxTicksPerFrame, MaxTicksPerFrameError, TickRate, TickRateError};
