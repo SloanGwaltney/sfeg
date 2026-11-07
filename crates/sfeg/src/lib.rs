@@ -2,11 +2,16 @@
 //!
 //! Games depend on this crate only. It re-exports the engine crates so the
 //! split between them stays an engine detail (ADR 0007).
+//!
+//! [`platform`] is what the runner and renderer use. Games only need it in
+//! tests, to check what [`Core::draw`] drew.
 
-pub use sfeg_core::math;
 pub use sfeg_core::{
-    AdvanceSummary, Core, FrameContext, GameObject, GameState, GameStateTickContext, GameTime,
-    Handle, HierarchyError, MaxTicksPerFrame, MaxTicksPerFrameError, ObjectHandle, Parent, Scene,
-    TickContext, TickRate, TickRateError, TypedHandleError,
+    ActiveCamera, ActiveCameraError, AdvanceSummary, Color, ColorError, Core, DrawContext,
+    FrameContext, GameObject, GameState, GameStateTickContext, GameTime, Handle, HierarchyError,
+    MaxTicksPerFrame, MaxTicksPerFrameError, ObjectHandle, Orthographic, Parent, Perspective,
+    Projection, ProjectionError, Scene, TickContext, TickRate, TickRateError,
+    TransformInterpolation, TypedHandleError,
 };
+pub use sfeg_core::{math, platform};
 pub use sfeg_winit::{RunError, WindowSettings, run};
