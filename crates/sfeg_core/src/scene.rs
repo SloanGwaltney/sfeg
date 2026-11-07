@@ -10,14 +10,14 @@ use crate::time::GameTime;
 /// A collection of game objects and their transforms (ADR 0004).
 ///
 /// Objects live in slots and are found by handle. Outside a tick, such as
-/// while setting up the first scene, [`Scene::spawn`] adds an object right
+/// while setting up the first scene, [`Scene::spawn_immediate`] adds an object right
 /// away. During a tick, objects spawn and despawn through the
 /// [`TickContext`], and those changes wait until the tick ends.
 pub struct Scene {
     slots: Vec<Slot>,
     /// Free slot indices, reused last-in, first-out.
     free: Vec<usize>,
-    commands: Commands,
+    scene_commands: SceneCommands,
 }
 
 struct Slot {
@@ -35,7 +35,7 @@ struct Entry {
 }
 
 #[derive(Default)]
-struct Commands {
+struct SceneCommands {
     spawns: Vec<PendingSpawn>,
     despawns: Vec<ObjectHandle>,
     /// How many new slots past the end the pending spawns have reserved.
@@ -55,15 +55,15 @@ impl Scene {
         Scene {
             slots: Vec::new(),
             free: Vec::new(),
-            commands: Commands::default(),
+            scene_commands: SceneCommands::default(),
         }
     }
 
     /// Adds `object` with the transform `local` right away.
     ///
     /// This is for building a scene outside a tick. During a tick, use
-    /// [`TickContext::spawn`], which waits until the tick ends.
-    pub fn spawn<T: GameObject>(&mut self, object: T, local: Transform) -> Handle<T> {
+    /// [`TickContext::spawn_deferred`], which waits until the tick ends.
+    pub fn spawn_immediate<T: GameObject>(&mut self, object: T, local: Transform) -> Handle<T> {
         let handle = self.reserve_now();
         self.insert(handle, Box::new(object), TypeId::of::<T>(), local);
         Handle::new(handle)
@@ -147,7 +147,7 @@ impl Scene {
 
             object.tick(&mut TickContext {
                 game_time,
-                scene: self,
+                current_scene: self,
                 self_handle,
             });
 
@@ -160,14 +160,14 @@ impl Scene {
     }
 
     fn apply_commands(&mut self) {
-        // Taking the commands also resets the count of reserved new slots.
-        let commands = std::mem::take(&mut self.commands);
+        // Taking the scene commands also resets the count of reserved new slots.
+        let scene_commands = std::mem::take(&mut self.scene_commands);
         // Spawns first, so an object spawned and despawned in the same tick
         // ends up despawned.
-        for spawn in commands.spawns {
+        for spawn in scene_commands.spawns {
             self.insert(spawn.handle, spawn.object, spawn.type_id, spawn.local);
         }
-        for handle in commands.despawns {
+        for handle in scene_commands.despawns {
             self.remove(handle);
         }
     }
@@ -175,7 +175,7 @@ impl Scene {
     /// Picks a slot for an object that is added right away.
     fn reserve_now(&mut self) -> ObjectHandle {
         assert_eq!(
-            self.commands.new_slots, 0,
+            self.scene_commands.new_slots, 0,
             "slots are only reserved for later while a tick runs"
         );
         match self.free.pop() {
@@ -197,8 +197,8 @@ impl Scene {
             let generation = self.slots[index].generation;
             return ObjectHandle { index, generation };
         }
-        let index = self.slots.len() + self.commands.new_slots;
-        self.commands.new_slots += 1;
+        let index = self.slots.len() + self.scene_commands.new_slots;
+        self.scene_commands.new_slots += 1;
         ObjectHandle {
             index,
             generation: 0,
@@ -292,7 +292,7 @@ fn downcast_mut<T: GameObject>(object: &mut dyn GameObject) -> &mut T {
 /// despawns wait until the tick ends, after every object has ticked.
 pub struct TickContext<'a> {
     game_time: &'a GameTime,
-    scene: &'a mut Scene,
+    current_scene: &'a mut Scene,
     self_handle: ObjectHandle,
 }
 
@@ -309,14 +309,14 @@ impl TickContext<'_> {
 
     /// This object's local transform.
     pub fn local(&self) -> &Transform {
-        self.scene
+        self.current_scene
             .local_of(self.self_handle)
             .expect("a ticking object's slot stays alive until the tick ends")
     }
 
     /// This object's local transform, to change it.
     pub fn local_mut(&mut self) -> &mut Transform {
-        self.scene
+        self.current_scene
             .local_of_mut(self.self_handle)
             .expect("a ticking object's slot stays alive until the tick ends")
     }
@@ -324,31 +324,31 @@ impl TickContext<'_> {
     /// Another object, or `None` if it is gone, hasn't spawned yet, or is
     /// the object that is ticking.
     pub fn get<T: GameObject>(&self, handle: Handle<T>) -> Option<&T> {
-        self.scene.get(handle)
+        self.current_scene.get(handle)
     }
 
     /// Another object, or `None` if it is gone, hasn't spawned yet, or is
     /// the object that is ticking.
     pub fn get_mut<T: GameObject>(&mut self, handle: Handle<T>) -> Option<&mut T> {
-        self.scene.get_mut(handle)
+        self.current_scene.get_mut(handle)
     }
 
     /// Another object's local transform, or `None` if it is gone or hasn't
     /// spawned yet.
     pub fn local_of(&self, handle: impl Into<ObjectHandle>) -> Option<&Transform> {
-        self.scene.local_of(handle)
+        self.current_scene.local_of(handle)
     }
 
     /// Another object's local transform, or `None` if it is gone or hasn't
     /// spawned yet.
     pub fn local_of_mut(&mut self, handle: impl Into<ObjectHandle>) -> Option<&mut Transform> {
-        self.scene.local_of_mut(handle)
+        self.current_scene.local_of_mut(handle)
     }
 
     /// Whether the object `handle` refers to is in the scene. An object
     /// despawned this tick is still alive until the tick ends.
     pub fn is_alive(&self, handle: impl Into<ObjectHandle>) -> bool {
-        self.scene.is_alive(handle)
+        self.current_scene.is_alive(handle)
     }
 
     /// Checks that `handle` refers to a live `T`. See [`Scene::typed`].
@@ -362,7 +362,7 @@ impl TickContext<'_> {
         &self,
         handle: ObjectHandle,
     ) -> Result<Handle<T>, TypedHandleError> {
-        self.scene.typed(handle)
+        self.current_scene.typed(handle)
     }
 
     /// Queues `object` to spawn with the transform `local` when the tick
@@ -370,9 +370,9 @@ impl TickContext<'_> {
     ///
     /// Until the tick ends the handle finds nothing. The object's first
     /// tick is the next one.
-    pub fn spawn<T: GameObject>(&mut self, object: T, local: Transform) -> Handle<T> {
-        let handle = self.scene.reserve_deferred();
-        self.scene.commands.spawns.push(PendingSpawn {
+    pub fn spawn_deferred<T: GameObject>(&mut self, object: T, local: Transform) -> Handle<T> {
+        let handle = self.current_scene.reserve_deferred();
+        self.current_scene.scene_commands.spawns.push(PendingSpawn {
             handle,
             object: Box::new(object),
             type_id: TypeId::of::<T>(),
@@ -386,8 +386,11 @@ impl TickContext<'_> {
     ///
     /// Until then it stays alive and still ticks if it hasn't yet. Nothing
     /// happens if it is already gone.
-    pub fn despawn(&mut self, handle: impl Into<ObjectHandle>) {
-        self.scene.commands.despawns.push(handle.into());
+    pub fn despawn_deferred(&mut self, handle: impl Into<ObjectHandle>) {
+        self.current_scene
+            .scene_commands
+            .despawns
+            .push(handle.into());
     }
 }
 
@@ -462,7 +465,7 @@ mod tests {
     #[test]
     fn objects_move_their_own_transform() {
         let mut scene = Scene::new();
-        let walker = scene.spawn(Walker, at(10.0));
+        let walker = scene.spawn_immediate(Walker, at(10.0));
         run_ticks(&mut scene, 3);
         assert_eq!(
             scene.local_of(walker).unwrap().position(),
@@ -474,10 +477,10 @@ mod tests {
     #[test]
     fn spawns_wait_until_the_tick_ends() {
         let mut scene = Scene::new();
-        let spawner = scene.spawn(
+        let spawner = scene.spawn_immediate(
             Probe::new(|ctx| {
                 if ctx.game_time().tick_count() == 0 {
-                    let child = ctx.spawn(Probe::new(|_| {}), at(1.0));
+                    let child = ctx.spawn_deferred(Probe::new(|_| {}), at(1.0));
                     // The handle exists now, but the object doesn't yet.
                     assert!(!ctx.is_alive(child));
                     assert!(ctx.get(child).is_none());
@@ -504,15 +507,15 @@ mod tests {
     #[test]
     fn despawned_objects_finish_the_tick() {
         let mut scene = Scene::new();
-        let quitter = scene.spawn(
+        let quitter = scene.spawn_immediate(
             Probe::new(|ctx| {
                 let me = ctx.self_handle();
-                ctx.despawn(me);
+                ctx.despawn_deferred(me);
                 assert!(ctx.is_alive(me));
             }),
             Transform::IDENTITY,
         );
-        let watcher = scene.spawn(
+        let watcher = scene.spawn_immediate(
             Probe::new(|ctx| {
                 // The quitter asked to despawn earlier this tick, but is
                 // still here until the tick ends.
@@ -534,15 +537,15 @@ mod tests {
     #[test]
     fn old_handles_never_find_a_reused_slot() {
         let mut scene = Scene::new();
-        let first = scene.spawn(
+        let first = scene.spawn_immediate(
             Probe::new(|ctx| {
                 let me = ctx.self_handle();
-                ctx.despawn(me);
+                ctx.despawn_deferred(me);
             }),
             Transform::IDENTITY,
         );
         run_ticks(&mut scene, 1);
-        let second = scene.spawn(Walker, Transform::IDENTITY);
+        let second = scene.spawn_immediate(Walker, Transform::IDENTITY);
         // Same slot, new generation.
         assert_eq!(first.untyped().index, second.untyped().index);
         assert!(scene.get(first).is_none());
@@ -557,11 +560,11 @@ mod tests {
     #[test]
     fn spawn_then_despawn_in_one_tick_ends_despawned() {
         let mut scene = Scene::new();
-        scene.spawn(
+        scene.spawn_immediate(
             Probe::new(|ctx| {
                 if ctx.game_time().tick_count() == 0 {
-                    let child = ctx.spawn(Walker, Transform::IDENTITY);
-                    ctx.despawn(child);
+                    let child = ctx.spawn_deferred(Walker, Transform::IDENTITY);
+                    ctx.despawn_deferred(child);
                 }
             }),
             Transform::IDENTITY,
@@ -573,18 +576,18 @@ mod tests {
     #[test]
     fn deferred_spawns_fill_free_and_new_slots() {
         let mut scene = Scene::new();
-        let doomed = scene.spawn(Walker, Transform::IDENTITY);
-        scene.spawn(
+        let doomed = scene.spawn_immediate(Walker, Transform::IDENTITY);
+        scene.spawn_immediate(
             Probe::new(|ctx| match ctx.game_time().tick_count() {
-                0 => ctx.despawn(ObjectHandle {
+                0 => ctx.despawn_deferred(ObjectHandle {
                     index: 0,
                     generation: 0,
                 }),
                 1 => {
                     // One reuses the freed slot, the other two are new.
-                    let a = ctx.spawn(Walker, at(1.0));
-                    let b = ctx.spawn(Walker, at(2.0));
-                    let c = ctx.spawn(Walker, at(3.0));
+                    let a = ctx.spawn_deferred(Walker, at(1.0));
+                    let b = ctx.spawn_deferred(Walker, at(2.0));
+                    let c = ctx.spawn_deferred(Walker, at(3.0));
                     assert_eq!([a, b, c].map(|h| h.untyped().index), [0, 2, 3]);
                 }
                 _ => {}
@@ -625,8 +628,8 @@ mod tests {
         }
 
         let mut scene = Scene::new();
-        let target = scene.spawn(Target { hits: 0 }, Transform::IDENTITY);
-        scene.spawn(Shooter { target }, Transform::IDENTITY);
+        let target = scene.spawn_immediate(Target { hits: 0 }, Transform::IDENTITY);
+        scene.spawn_immediate(Shooter { target }, Transform::IDENTITY);
         run_ticks(&mut scene, 2);
         assert_eq!(scene.get(target).unwrap().hits, 2);
         assert_eq!(
@@ -638,7 +641,7 @@ mod tests {
     #[test]
     fn an_object_cant_find_itself_during_its_own_tick() {
         let mut scene = Scene::new();
-        scene.spawn(
+        scene.spawn_immediate(
             Probe::new(|ctx| {
                 let me = ctx.typed::<Probe>(ctx.self_handle()).unwrap();
                 // Taken out of its slot, so no object, but the type check
@@ -654,7 +657,7 @@ mod tests {
     #[test]
     fn typed_checks_the_type() {
         let mut scene = Scene::new();
-        let walker = scene.spawn(Walker, Transform::IDENTITY).untyped();
+        let walker = scene.spawn_immediate(Walker, Transform::IDENTITY).untyped();
         assert!(scene.typed::<Walker>(walker).is_ok());
         assert_eq!(
             scene.typed::<Probe>(walker),
@@ -665,11 +668,11 @@ mod tests {
     #[test]
     fn despawning_a_gone_object_does_nothing() {
         let mut scene = Scene::new();
-        scene.spawn(
+        scene.spawn_immediate(
             Probe::new(|ctx| {
                 let me = ctx.self_handle();
-                ctx.despawn(me);
-                ctx.despawn(me);
+                ctx.despawn_deferred(me);
+                ctx.despawn_deferred(me);
             }),
             Transform::IDENTITY,
         );
@@ -682,7 +685,7 @@ mod tests {
     #[test]
     fn out_of_generations_retires_the_slot() {
         let mut scene = Scene::new();
-        let handle = scene.spawn(Walker, Transform::IDENTITY).untyped();
+        let handle = scene.spawn_immediate(Walker, Transform::IDENTITY).untyped();
         scene.slots[0].generation = u32::MAX;
         let handle = ObjectHandle {
             generation: u32::MAX,
@@ -690,14 +693,14 @@ mod tests {
         };
         scene.remove(handle);
         assert!(scene.free.is_empty());
-        let next = scene.spawn(Walker, Transform::IDENTITY);
+        let next = scene.spawn_immediate(Walker, Transform::IDENTITY);
         assert_eq!(next.untyped().index, 1);
     }
 
     #[test]
     fn handles_debug_without_the_scene() {
         let mut scene = Scene::new();
-        let walker = scene.spawn(Walker, Transform::IDENTITY);
+        let walker = scene.spawn_immediate(Walker, Transform::IDENTITY);
         assert_eq!(format!("{:?}", walker.untyped()), "ObjectHandle(0v0)");
         assert!(format!("{walker:?}").ends_with("Walker>(0v0)"));
     }

@@ -8,17 +8,21 @@ use crate::time::{GameTime, TickRate};
 /// windowed runner will drive it the same way.
 pub struct Core<G: GameState> {
     game_state: G,
-    scene: Scene,
+    current_scene: Scene,
     game_time: GameTime,
 }
 
 impl<G: GameState> Core<G> {
-    /// Creates a core that runs `game_state` and the first `scene` at
-    /// `tick_rate`.
-    pub fn new(game_state: G, scene: Scene, tick_rate: TickRate) -> Core<G> {
+    /// Creates a core that runs `game_state` at `tick_rate`, starting in
+    /// `first_scene`.
+    ///
+    /// A game can't start without a scene. Its setup always builds the
+    /// first one (ADR 0006), even if it starts empty with
+    /// [`Scene::new`].
+    pub fn new(game_state: G, first_scene: Scene, tick_rate: TickRate) -> Core<G> {
         Core {
             game_state,
-            scene,
+            current_scene: first_scene,
             game_time: GameTime::new(tick_rate),
         }
     }
@@ -28,7 +32,7 @@ impl<G: GameState> Core<G> {
     pub fn tick(&mut self) {
         let mut ctx = GameStateTickContext::new(&self.game_time);
         self.game_state.tick(&mut ctx);
-        self.scene.tick(&self.game_time);
+        self.current_scene.tick(&self.game_time);
         self.game_time.advance_one_tick();
     }
 
@@ -42,15 +46,15 @@ impl<G: GameState> Core<G> {
         &self.game_state
     }
 
-    /// The current scene, read-only.
-    pub fn scene(&self) -> &Scene {
-        &self.scene
+    /// The scene that is running now, read-only.
+    pub fn current_scene(&self) -> &Scene {
+        &self.current_scene
     }
 
-    /// The current scene, to change between ticks. [`Scene::spawn`] adds
-    /// objects right away here, since no tick is running.
-    pub fn scene_mut(&mut self) -> &mut Scene {
-        &mut self.scene
+    /// The scene that is running now, to change between ticks, such as
+    /// with [`Scene::spawn_immediate`].
+    pub fn current_scene_mut(&mut self) -> &mut Scene {
+        &mut self.current_scene
     }
 }
 

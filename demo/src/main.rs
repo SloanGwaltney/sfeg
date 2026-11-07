@@ -46,7 +46,7 @@ impl GameObject for Walker {
 /// Builds the game and its first scene.
 fn setup() -> (Core<HelloGame>, sfeg::Handle<Walker>) {
     let mut scene = Scene::new();
-    let walker = scene.spawn(Walker { speed: 6.0 }, Transform::IDENTITY);
+    let walker = scene.spawn_immediate(Walker { speed: 6.0 }, Transform::IDENTITY);
     let core = Core::new(HelloGame::default(), scene, TickRate::DEFAULT);
     (core, walker)
 }
@@ -55,7 +55,7 @@ fn main() {
     let (mut core, walker) = setup();
     for _ in 0..3 {
         core.tick();
-        if let Some(local) = core.scene().local_of(walker) {
+        if let Some(local) = core.current_scene().local_of(walker) {
             println!("  walker at x = {:.2}", local.position().x());
         }
     }
@@ -83,7 +83,12 @@ mod tests {
         for _ in 0..60 {
             core.tick();
         }
-        let x = core.scene().local_of(walker).unwrap().position().x();
+        let x = core
+            .current_scene()
+            .local_of(walker)
+            .unwrap()
+            .position()
+            .x();
         assert!((x - 6.0).abs() < 1e-4, "{x}");
     }
 }
