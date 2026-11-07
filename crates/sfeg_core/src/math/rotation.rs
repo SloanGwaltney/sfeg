@@ -174,6 +174,10 @@ impl Rotation {
         }
         Ok(Rotation(self.0.slerp(end.0, t).normalize()))
     }
+
+    pub(crate) fn to_glam(self) -> glam::Quat {
+        self.0
+    }
 }
 
 fn is_normalized(length_squared: f32) -> bool {
