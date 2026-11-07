@@ -18,6 +18,7 @@ mod frame;
 mod game_object;
 mod game_state;
 mod handle;
+pub mod input;
 pub mod math;
 pub mod platform;
 mod scene;

@@ -1,0 +1,5 @@
+error: `kind` must be `Button` or `Axis2d`
+ --> tests/ui/unknown_kind.rs:4:32
+  |
+4 | #[action(name = "jump", kind = Trigger)]
+  |                                ^^^^^^^

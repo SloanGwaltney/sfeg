@@ -2,7 +2,8 @@ use std::time::Duration;
 
 use crate::frame::FrameContext;
 use crate::game_state::{GameState, GameStateTickContext};
-use crate::platform::DrawList;
+use crate::input::{InputBindings, InputState};
+use crate::platform::{DrawList, InputEvent};
 use crate::scene::{Blend, Scene, TransformInterpolation};
 use crate::time::{GameTime, MaxTicksPerFrame, TickRate};
 
@@ -31,21 +32,24 @@ pub struct Core<G: GameState> {
     /// [`Core::advance`]. Zero right after a [`Core::tick`].
     interpolation_factor: f32,
     transform_interpolation: TransformInterpolation,
+    input: InputState,
 }
 
 impl<G: GameState> Core<G> {
     /// Creates a core that runs `game_state` at `tick_rate`, starting in
-    /// `first_scene`. [`Core::advance`] runs at most `max_ticks_per_frame`
-    /// ticks per call.
+    /// `first_scene`, with its input actions bound by `input_bindings`.
+    /// [`Core::advance`] runs at most `max_ticks_per_frame` ticks per call.
     ///
     /// A game can't start without a scene. Its setup always builds the
     /// first one (ADR 0006), even if it starts empty with
-    /// [`Scene::new`].
+    /// [`Scene::new`]. A game that takes no input passes
+    /// [`InputBindings::none`].
     pub fn new(
         game_state: G,
         first_scene: Scene,
         tick_rate: TickRate,
         max_ticks_per_frame: MaxTicksPerFrame,
+        input_bindings: InputBindings,
     ) -> Core<G> {
         Core {
             game_state,
@@ -55,6 +59,7 @@ impl<G: GameState> Core<G> {
             owed_real_time: 0,
             interpolation_factor: 0.0,
             transform_interpolation: TransformInterpolation::default(),
+            input: InputState::new(input_bindings),
         }
     }
 
@@ -94,8 +99,13 @@ impl<G: GameState> Core<G> {
         let interpolation_factor =
             ((self.owed_real_time as f64 / UNITS_PER_TICK as f64) as f32).min(LARGEST_FACTOR);
         self.interpolation_factor = interpolation_factor;
-        let mut ctx =
-            FrameContext::new(&self.game_time, real_dt.as_secs_f32(), interpolation_factor);
+        self.input.apply_pending_to_frame_view();
+        let mut ctx = FrameContext::new(
+            &self.game_time,
+            real_dt.as_secs_f32(),
+            interpolation_factor,
+            self.input.frame_view(),
+        );
         self.game_state.frame(&mut ctx);
         self.current_scene.frame(&mut ctx);
 
@@ -107,13 +117,27 @@ impl<G: GameState> Core<G> {
 
     /// Runs exactly one tick (ADR 0008): the game state, then every
     /// object, then the spawns and despawns they asked for (ADR 0012).
+    ///
+    /// Input that arrived since the last tick is seen by this one, in
+    /// [`TickContext::tick_input`](crate::TickContext::tick_input).
     pub fn tick(&mut self) {
-        let mut ctx = GameStateTickContext::new(&self.game_time);
+        self.input.apply_pending_to_tick_view();
+        let tick_input = self.input.tick_view();
+        let mut ctx = GameStateTickContext::new(&self.game_time, tick_input);
         self.game_state.tick(&mut ctx);
-        self.current_scene.tick(&self.game_time);
+        self.current_scene.tick(&self.game_time, tick_input);
         self.game_time.advance_one_tick();
         // No real time has passed since this tick.
         self.interpolation_factor = 0.0;
+    }
+
+    /// Applies one input event from the platform, such as a key press
+    /// (ADR 0016). The runner calls it for each event as it arrives.
+    ///
+    /// The next tick sees it in the tick view, and the next frame in the
+    /// frame view. Tests can call it to press keys before a [`Core::tick`].
+    pub fn apply_input_event(&mut self, event: InputEvent) {
+        self.input.apply_event(event);
     }
 
     /// Runs every object's `draw` and returns what they drew, seen from the
@@ -198,6 +222,7 @@ mod tests {
     use std::rc::Rc;
 
     use crate::GameObject;
+    use crate::input::test_actions::Jump;
     use crate::math::Transform;
     use crate::scene::Parent;
 
@@ -207,6 +232,7 @@ mod tests {
             Scene::new(),
             TickRate::DEFAULT,
             MaxTicksPerFrame::DEFAULT,
+            InputBindings::none(),
         )
     }
 
@@ -403,6 +429,48 @@ mod tests {
         core.set_transform_interpolation(TransformInterpolation::Disabled);
         core.advance(Duration::from_millis(25));
         assert_eq!(first_drawn_x(&mut core), 1.0);
+    }
+
+    /// Records whether jump was just pressed in each tick and frame.
+    #[derive(Default)]
+    struct RecordJumps {
+        log: Vec<String>,
+    }
+
+    impl GameState for RecordJumps {
+        fn tick(&mut self, ctx: &mut GameStateTickContext) {
+            let pressed = ctx.tick_input().just_pressed::<Jump>();
+            self.log.push(format!("tick {pressed}"));
+        }
+
+        fn frame(&mut self, ctx: &mut FrameContext) {
+            let pressed = ctx.frame_input().just_pressed::<Jump>();
+            self.log.push(format!("frame {pressed}"));
+        }
+    }
+
+    #[test]
+    fn a_key_press_reaches_one_tick_and_one_frame() {
+        let mut actions = crate::input::ActionRegistry::new();
+        actions.register::<Jump>().unwrap();
+        let bindings =
+            InputBindings::from_toml("[button.jump]\nkeys = [\"Space\"]", &actions).unwrap();
+        let mut core = Core::new(
+            RecordJumps::default(),
+            Scene::new(),
+            TickRate::DEFAULT,
+            MaxTicksPerFrame::DEFAULT,
+            bindings,
+        );
+        core.apply_input_event(InputEvent::KeyPressed(crate::input::KeyCode::Space));
+        // No tick fits in this frame, so the tick sees the press next frame.
+        core.advance(Duration::from_millis(10));
+        // Two ticks fit here; only the first sees it.
+        core.advance(Duration::from_millis(30));
+        assert_eq!(
+            core.game_state().log,
+            ["frame true", "tick true", "tick false", "frame false"]
+        );
     }
 
     #[test]

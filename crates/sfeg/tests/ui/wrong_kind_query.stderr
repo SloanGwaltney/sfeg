@@ -1,0 +1,17 @@
+error[E0271]: type mismatch resolving `<Move as Action>::Kind == Button`
+  --> tests/ui/wrong_kind_query.rs:13:49
+   |
+13 |         let _ = ctx.tick_input().just_pressed::<Move>();
+   |                                                 ^^^^ type mismatch resolving `<Move as Action>::Kind == Button`
+   |
+note: expected this to be `Button`
+  --> tests/ui/wrong_kind_query.rs:4:10
+   |
+ 4 | #[derive(Action)]
+   |          ^^^^^^
+note: required by a bound in `InputView::just_pressed`
+  --> $WORKSPACE/crates/sfeg_core/src/input/view.rs
+   |
+   |     pub fn just_pressed<A: Action<Kind = Button>>(&self) -> bool {
+   |                                   ^^^^^^^^^^^^^ required by this bound in `InputView::just_pressed`
+   = note: this error originates in the derive macro `Action` (in Nightly builds, run with -Z macro-backtrace for more info)

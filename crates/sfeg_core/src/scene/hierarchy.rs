@@ -486,7 +486,10 @@ mod tests {
     }
 
     fn tick(scene: &mut Scene) {
-        scene.tick(&GameTime::new(TickRate::DEFAULT));
+        scene.tick(
+            &GameTime::new(TickRate::DEFAULT),
+            &crate::input::InputView::empty(),
+        );
     }
 
     fn at(x: f32, y: f32) -> Transform {
