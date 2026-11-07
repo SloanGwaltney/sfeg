@@ -157,6 +157,23 @@ impl Rotation {
     pub fn then(self, next: Rotation) -> Rotation {
         Rotation((next.0 * self.0).normalize())
     }
+
+    /// Spherical interpolation: `self` at `t = 0.0`, `end` at `t = 1.0`,
+    /// turning at a constant speed along the shorter way around.
+    ///
+    /// `t` is not clamped; values outside `0.0..=1.0` keep turning past
+    /// either end. Like [`Rotation::then`], the result is scaled back to
+    /// length 1 against f32 rounding.
+    ///
+    /// # Errors
+    ///
+    /// [`RotationError::NotFinite`] if `t` is NaN or infinite.
+    pub fn slerp(self, end: Rotation, t: f32) -> Result<Rotation, RotationError> {
+        if !t.is_finite() {
+            return Err(RotationError::NotFinite);
+        }
+        Ok(Rotation(self.0.slerp(end.0, t).normalize()))
+    }
 }
 
 fn is_normalized(length_squared: f32) -> bool {
@@ -376,6 +393,38 @@ mod tests {
         }
         let [x, y, z, w] = r.to_array();
         assert!(Rotation::from_quat(x, y, z, w).is_ok());
+    }
+
+    #[test]
+    fn slerp_turns_at_constant_speed() {
+        let quarter = Rotation::from_rotation_z(FRAC_PI_2).unwrap();
+        assert_eq!(
+            Rotation::IDENTITY.slerp(quarter, 0.0),
+            Ok(Rotation::IDENTITY)
+        );
+        let halfway = Rotation::IDENTITY.slerp(quarter, 0.5).unwrap();
+        let expected = Rotation::from_rotation_z(FRAC_PI_2 / 2.0).unwrap();
+        assert_vector_close(
+            halfway.rotate(Vector3::UNIT_X),
+            expected.rotate(Vector3::UNIT_X),
+        );
+        assert_eq!(
+            Rotation::IDENTITY.slerp(quarter, f32::NAN),
+            Err(RotationError::NotFinite)
+        );
+    }
+
+    #[test]
+    fn slerp_takes_the_shorter_way() {
+        // A turn of 3/4 around z is the same rotation as -1/4, so halfway
+        // there is -1/8, not 3/8.
+        let three_quarters = Rotation::from_rotation_z(3.0 * FRAC_PI_2).unwrap();
+        let halfway = Rotation::IDENTITY.slerp(three_quarters, 0.5).unwrap();
+        let expected = Rotation::from_rotation_z(-FRAC_PI_2 / 2.0).unwrap();
+        assert_vector_close(
+            halfway.rotate(Vector3::UNIT_X),
+            expected.rotate(Vector3::UNIT_X),
+        );
     }
 
     #[test]
