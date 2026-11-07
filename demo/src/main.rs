@@ -1,30 +1,24 @@
 //! A demo game built on SFEG.
 //!
-//! For now it runs headless: it ticks the engine a few times, greets each
-//! tick, and moves a walker across the scene with a hat on its head.
+//! It opens an empty window and runs the game in it. Nothing is drawn yet:
+//! a walker with a hat on its head moves across the scene unseen, and the
+//! game state says hello once per second of game time.
 
 use sfeg::math::{Transform, Vector3};
 use sfeg::{
     Core, GameObject, GameState, GameStateTickContext, MaxTicksPerFrame, Parent, Scene,
-    TickContext, TickRate,
+    TickContext, TickRate, WindowSettings,
 };
 
 /// The game-wide state.
-#[derive(Default)]
-struct HelloGame {
-    greetings: Vec<String>,
-}
+struct HelloGame;
 
 impl GameState for HelloGame {
     fn tick(&mut self, ctx: &mut GameStateTickContext) {
         let game_time = ctx.game_time();
-        let greeting = format!(
-            "Hello from tick {} ({:.3}s)",
-            game_time.tick_count(),
-            game_time.elapsed_seconds()
-        );
-        println!("{greeting}");
-        self.greetings.push(greeting);
+        if game_time.tick_count() % u64::from(game_time.tick_rate().hz()) == 0 {
+            println!("Hello at {:.0}s of game time", game_time.elapsed_seconds());
+        }
     }
 }
 
@@ -63,7 +57,7 @@ fn setup() -> (Core<HelloGame>, sfeg::Handle<Walker>, sfeg::Handle<Hat>) {
         .spawn_immediate(Hat, walker, on_head)
         .expect("the walker was just spawned");
     let core = Core::new(
-        HelloGame::default(),
+        HelloGame,
         scene,
         TickRate::DEFAULT,
         MaxTicksPerFrame::DEFAULT,
@@ -71,41 +65,21 @@ fn setup() -> (Core<HelloGame>, sfeg::Handle<Walker>, sfeg::Handle<Hat>) {
     (core, walker, hat)
 }
 
-fn main() {
-    let (mut core, walker, hat) = setup();
-    for _ in 0..3 {
-        core.tick();
-        let scene = core.current_scene();
-        if let (Some(walker), Some(hat)) = (
-            scene.world_position_of(walker),
-            scene.world_position_of(hat),
-        ) {
-            println!(
-                "  walker at ({:.2}, {:.2}), hat at ({:.2}, {:.2})",
-                walker.x(),
-                walker.y(),
-                hat.x(),
-                hat.y()
-            );
-        }
-    }
+fn main() -> Result<(), sfeg::RunError> {
+    let (core, _, _) = setup();
+    sfeg::run(
+        core,
+        WindowSettings {
+            title: "SFEG demo".to_string(),
+            logical_width: 1280,
+            logical_height: 720,
+        },
+    )
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn greets_once_per_tick() {
-        let (mut core, _, _) = setup();
-        for _ in 0..2 {
-            core.tick();
-        }
-        assert_eq!(
-            core.game_state().greetings,
-            ["Hello from tick 0 (0.000s)", "Hello from tick 1 (0.017s)"]
-        );
-    }
 
     #[test]
     fn walker_covers_its_speed_in_one_second() {
