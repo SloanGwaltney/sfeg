@@ -2,6 +2,7 @@ use std::any::{Any, TypeId};
 use std::error::Error;
 use std::fmt;
 
+use crate::frame::FrameContext;
 use crate::game_object::GameObject;
 use crate::handle::{Handle, ObjectHandle};
 use crate::math::Transform;
@@ -193,6 +194,19 @@ impl Scene {
                 .object = Some(object);
         }
         self.apply_commands();
+    }
+
+    /// Runs every object's frame, in slot order.
+    pub(crate) fn frame(&mut self, ctx: &mut FrameContext) {
+        for slot in &mut self.slots {
+            if let Some(entry) = &mut slot.entry {
+                entry
+                    .object
+                    .as_mut()
+                    .expect("objects are only taken out during a tick")
+                    .frame(ctx);
+            }
+        }
     }
 
     fn apply_commands(&mut self) {

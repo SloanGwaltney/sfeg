@@ -1,3 +1,4 @@
+use crate::frame::FrameContext;
 use crate::time::GameTime;
 
 /// The game-wide state: one game-defined struct that lasts for the whole run
@@ -7,6 +8,13 @@ use crate::time::GameTime;
 pub trait GameState {
     /// Runs once per fixed tick and changes the game (ADR 0008).
     fn tick(&mut self, ctx: &mut GameStateTickContext) {
+        let _ = ctx;
+    }
+
+    /// Runs once per rendered frame, before any object's `frame`, and only
+    /// updates presentation (ADR 0008, ADR 0012). See
+    /// [`GameObject::frame`](crate::GameObject::frame).
+    fn frame(&mut self, ctx: &mut FrameContext) {
         let _ = ctx;
     }
 }

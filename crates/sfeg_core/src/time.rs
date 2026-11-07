@@ -55,6 +55,61 @@ impl fmt::Display for TickRateError {
 
 impl Error for TickRateError {}
 
+/// The most ticks [`Core::advance`](crate::Core::advance) runs for one
+/// frame (ADR 0008).
+///
+/// When a frame took longer than this many ticks, such as after a stall,
+/// the extra time is dropped and the game slows down instead of falling
+/// further behind. It is never zero. Build one with
+/// [`MaxTicksPerFrame::new`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MaxTicksPerFrame {
+    ticks: u32,
+}
+
+impl MaxTicksPerFrame {
+    /// 8 ticks per frame, the same default as Godot's physics steps. At
+    /// 60 Hz the game keeps real-time speed down to 7.5 frames per second.
+    pub const DEFAULT: MaxTicksPerFrame = MaxTicksPerFrame { ticks: 8 };
+
+    /// Creates a cap of `ticks` ticks per frame.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MaxTicksPerFrameError::Zero`] if `ticks` is zero.
+    pub fn new(ticks: u32) -> Result<MaxTicksPerFrame, MaxTicksPerFrameError> {
+        if ticks == 0 {
+            return Err(MaxTicksPerFrameError::Zero);
+        }
+        Ok(MaxTicksPerFrame { ticks })
+    }
+
+    /// The most ticks one frame runs.
+    pub fn ticks(self) -> u32 {
+        self.ticks
+    }
+}
+
+/// Why a [`MaxTicksPerFrame`] could not be created.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum MaxTicksPerFrameError {
+    /// The cap was zero, so no tick could ever run.
+    Zero,
+}
+
+impl fmt::Display for MaxTicksPerFrameError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            MaxTicksPerFrameError::Zero => {
+                write!(f, "max ticks per frame must be at least 1")
+            }
+        }
+    }
+}
+
+impl Error for MaxTicksPerFrameError {}
+
 /// Game time, counted in ticks (ADR 0022).
 ///
 /// This is not real (wall-clock) time. It only moves forward when a tick
@@ -114,6 +169,12 @@ mod tests {
     fn default_tick_rate_is_60_hz() {
         assert_eq!(TickRate::DEFAULT.hz(), 60);
         assert_eq!(TickRate::new(60), Ok(TickRate::DEFAULT));
+    }
+
+    #[test]
+    fn zero_max_ticks_per_frame_is_an_error() {
+        assert_eq!(MaxTicksPerFrame::new(0), Err(MaxTicksPerFrameError::Zero));
+        assert_eq!(MaxTicksPerFrame::new(8), Ok(MaxTicksPerFrame::DEFAULT));
     }
 
     #[test]
