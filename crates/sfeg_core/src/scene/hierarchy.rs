@@ -155,8 +155,8 @@ impl Scene {
     /// parent.
     ///
     /// Applies immediately, even during a tick. The object is added after
-    /// the parent's other children. Interpolation will skip this change
-    /// for one tick, once it exists (ADR 0013).
+    /// the parent's other children. Interpolation skips the object until
+    /// the next tick, so it doesn't slide to its new place (ADR 0013).
     ///
     /// # Errors
     ///
@@ -173,6 +173,7 @@ impl Scene {
         let parent = parent.into().handle();
         self.check_new_parent(child, parent)?;
         self.link(child, parent);
+        self.skip_interpolation(child);
         Ok(())
     }
 
@@ -182,8 +183,8 @@ impl Scene {
     /// Applies immediately, even during a tick. The object is added after
     /// the parent's other children. Its world position stays exact; its
     /// rotation and scale are approximate if the old or new parents have
-    /// non-uniform scale (ADR 0013). Interpolation will skip this change
-    /// for one tick, once it exists.
+    /// non-uniform scale (ADR 0013). Interpolation skips the object until
+    /// the next tick, so it doesn't swing through a wrong place.
     ///
     /// # Errors
     ///
@@ -212,6 +213,7 @@ impl Scene {
         let local = to_transform(world.then(to_new_parent))?;
         self.link(child, parent);
         self.entry_mut(child).expect("checked above").local = local;
+        self.skip_interpolation(child);
         Ok(())
     }
 
@@ -289,6 +291,7 @@ impl Scene {
                 Ok(local) => {
                     self.link(child, None);
                     self.entry_mut(child).expect("children are alive").local = local;
+                    self.skip_interpolation(child);
                 }
                 // Nobody is left to return an error to, so the child goes
                 // with its parent.

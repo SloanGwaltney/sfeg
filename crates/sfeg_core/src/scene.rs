@@ -2,6 +2,7 @@ use std::any::{Any, TypeId};
 use std::error::Error;
 use std::fmt;
 
+use crate::camera::ActiveCamera;
 use crate::frame::FrameContext;
 use crate::game_object::GameObject;
 use crate::handle::{Handle, ObjectHandle};
@@ -9,8 +10,11 @@ use crate::math::Transform;
 use crate::time::GameTime;
 
 mod hierarchy;
+mod presentation;
 
 pub use hierarchy::{HierarchyError, Parent};
+pub(crate) use presentation::Blend;
+pub use presentation::TransformInterpolation;
 
 /// A collection of game objects and their transforms (ADR 0004).
 ///
@@ -27,6 +31,11 @@ pub struct Scene {
     /// Free slot indices, reused last-in, first-out.
     free: Vec<usize>,
     scene_commands: SceneCommands,
+    /// The camera the game set. Its object may be gone since.
+    active_camera: Option<ActiveCamera>,
+    /// Whether the missing camera was already logged, so it is logged once
+    /// each time the scene loses its camera, not every frame (ADR 0024).
+    missing_camera_reported: bool,
 }
 
 struct Slot {
@@ -41,6 +50,9 @@ struct Entry {
     object: Option<Box<dyn GameObject>>,
     type_id: TypeId,
     local: Transform,
+    /// The local transform before the last tick, which drawing blends from
+    /// (ADR 0013). Equal to `local` when interpolation is skipped.
+    previous_local: Transform,
     /// Always a live object: despawning a parent despawns or detaches its
     /// children first.
     parent: Option<ObjectHandle>,
@@ -76,6 +88,8 @@ impl Scene {
             slots: Vec::new(),
             free: Vec::new(),
             scene_commands: SceneCommands::default(),
+            active_camera: None,
+            missing_camera_reported: false,
         }
     }
 
@@ -169,6 +183,7 @@ impl Scene {
     /// Runs every object's tick, in slot order, then applies the spawns and
     /// despawns they asked for.
     pub(crate) fn tick(&mut self, game_time: &GameTime) {
+        self.remember_previous_locals();
         // Spawns are deferred, so no slots are added while this runs.
         for index in 0..self.slots.len() {
             let slot = &mut self.slots[index];
@@ -290,6 +305,8 @@ impl Scene {
             object: Some(object),
             type_id,
             local,
+            // A new object doesn't slide in from anywhere (ADR 0013).
+            previous_local: local,
             parent: None,
             children: Vec::new(),
         };
@@ -402,6 +419,10 @@ impl TickContext<'_> {
     }
 
     /// This object's local transform, to change it.
+    ///
+    /// The change is interpolated: drawing blends from the transform before
+    /// this tick to the new one. For a jump, use
+    /// [`TickContext::teleport_local`].
     pub fn local_mut(&mut self) -> &mut Transform {
         self.current_scene
             .local_of_mut(self.self_handle)

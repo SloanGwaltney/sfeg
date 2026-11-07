@@ -6,21 +6,34 @@
 //!
 //! Right now it holds the game state and one [`Scene`] of game objects,
 //! advances them one fixed tick at a time with [`Core::tick`] or by real
-//! elapsed time with [`Core::advance`], and provides the [`math`] types.
+//! elapsed time with [`Core::advance`], collects what they draw with
+//! [`Core::draw`], and provides the [`math`] types. What the runner and
+//! renderer take from it lives in [`platform`].
 
+mod camera;
+mod color;
 mod core_loop;
+mod draw;
 mod frame;
 mod game_object;
 mod game_state;
 mod handle;
 pub mod math;
+pub mod platform;
 mod scene;
 mod time;
 
+pub use camera::{
+    ActiveCamera, ActiveCameraError, Orthographic, Perspective, Projection, ProjectionError,
+};
+pub use color::{Color, ColorError};
 pub use core_loop::{AdvanceSummary, Core};
+pub use draw::DrawContext;
 pub use frame::FrameContext;
 pub use game_object::GameObject;
 pub use game_state::{GameState, GameStateTickContext};
 pub use handle::{Handle, ObjectHandle};
-pub use scene::{HierarchyError, Parent, Scene, TickContext, TypedHandleError};
+pub use scene::{
+    HierarchyError, Parent, Scene, TickContext, TransformInterpolation, TypedHandleError,
+};
 pub use time::{GameTime, MaxTicksPerFrame, MaxTicksPerFrameError, TickRate, TickRateError};
