@@ -6,24 +6,25 @@ use crate::time::GameTime;
 /// Game state is optional. A game without one uses `()`.
 pub trait GameState {
     /// Runs once per fixed tick and changes the game (ADR 0008).
-    fn tick(&mut self, ctx: &mut TickContext) {
+    fn tick(&mut self, ctx: &mut GameStateTickContext) {
         let _ = ctx;
     }
 }
 
 impl GameState for () {}
 
-/// What a tick callback can see and do.
+/// What the game state's tick can see and do.
 ///
-/// For now this is only game time. It grows to hold the command queue,
-/// tick input, and access to other objects (ADR 0008).
-pub struct TickContext<'a> {
+/// It is separate from the object [`TickContext`](crate::TickContext)
+/// because game state has no transform (ADR 0012). For now it holds only
+/// game time.
+pub struct GameStateTickContext<'a> {
     game_time: &'a GameTime,
 }
 
-impl<'a> TickContext<'a> {
-    pub(crate) fn new(game_time: &'a GameTime) -> TickContext<'a> {
-        TickContext { game_time }
+impl<'a> GameStateTickContext<'a> {
+    pub(crate) fn new(game_time: &'a GameTime) -> GameStateTickContext<'a> {
+        GameStateTickContext { game_time }
     }
 
     /// Game time at the start of this tick.

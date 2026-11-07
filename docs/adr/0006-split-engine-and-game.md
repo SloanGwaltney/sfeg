@@ -70,3 +70,5 @@ SFEG will split responsibilities between the engine and the game, and split the 
 - The custom shader and material contract, resource loading details, and object hierarchy are left to later ADRs.
 
 ## Notes
+
+- 2026-11-07: The game's setup entry point must build a first scene: `Core::new` takes one, so the engine can't start without a scene. A game with nothing to show yet passes an empty one.

@@ -4,4 +4,7 @@
 //! split between them stays an engine detail (ADR 0007).
 
 pub use sfeg_core::math;
-pub use sfeg_core::{Core, GameState, GameTime, TickContext, TickRate, TickRateError};
+pub use sfeg_core::{
+    Core, GameObject, GameState, GameStateTickContext, GameTime, Handle, ObjectHandle, Scene,
+    TickContext, TickRate, TickRateError, TypedHandleError,
+};
