@@ -35,7 +35,7 @@ pub struct WindowSettings {
 /// (ADR 0006).
 ///
 /// Each rendered frame calls [`Core::advance`] with the real time since the
-/// previous frame, then draws. Frames are paced by vsync. While the window
+/// previous frame, then [`Core::draw`], and renders what it drew. Frames are paced by vsync. While the window
 /// is hidden, some platforms stop asking for frames, so the game pauses
 /// until it is shown again.
 ///
@@ -125,8 +125,9 @@ impl<G: GameState> Runner<G> {
             );
         }
 
+        let draw_list = self.core.draw();
         open.window.pre_present_notify();
-        open.renderer.render_frame();
+        open.renderer.render_frame(&draw_list);
         // Ask for the next frame right away. Vsync paces them.
         open.window.request_redraw();
     }

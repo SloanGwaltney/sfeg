@@ -8,6 +8,7 @@ repository.workspace = true
 
 # Never depend on winit (ADR 0007).
 [dependencies]
+bytemuck = "1.25.2"
 pollster = "1.0.1"
 sfeg_core.workspace = true
 tracing = { version = "0.1.44", default-features = false, features = ["std"] }

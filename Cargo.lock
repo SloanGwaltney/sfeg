@@ -1579,6 +1579,7 @@ dependencies = [
 name = "sfeg_wgpu"
 version = "0.1.0"
 dependencies = [
+ "bytemuck",
  "pollster",
  "sfeg_core",
  "tracing",
