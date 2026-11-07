@@ -33,6 +33,12 @@ impl<T: HasWindowHandle + HasDisplayHandle + fmt::Debug + Send + Sync> RenderWin
 
 /// Draws frames into one window.
 pub struct Renderer {
+    /// Shared, because the window has several owners that must all keep it
+    /// alive: the runner uses it every frame, the surface draws into it, and
+    /// the renderer keeps it to recreate a lost surface. Borrowing instead
+    /// would make the surface borrow from a sibling field, which safe Rust
+    /// can't express. `Arc`, not `Rc`, because wgpu requires window handles
+    /// to be `Send + Sync`.
     window: Arc<dyn RenderWindow>,
     surface: wgpu::Surface<'static>,
     adapter: wgpu::Adapter,
