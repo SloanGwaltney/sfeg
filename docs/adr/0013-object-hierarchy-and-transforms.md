@@ -93,3 +93,5 @@ Since the engine owns every transform, it can keep each object's previous transf
 - How transforms and the hierarchy are saved is left to the serialization ADR.
 
 ## Notes
+
+- 2026-11-07: The `Transform` type itself is the seam that rejects non-finite positions and scales ([0023](0023-math-value-guarantees.md)): its constructors and setters return `TransformError`, so every stored transform is finite. Combined world matrices are a separate `Matrix4` type, which is always affine and, like vectors, may become non-finite through math.

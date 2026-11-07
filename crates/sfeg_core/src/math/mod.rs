@@ -5,19 +5,23 @@
 //!
 //! Plain vectors may hold NaN or infinity, and their arithmetic doesn't
 //! check for it. The engine rejects non-finite values where it stores them,
-//! such as in transforms. Types that carry a guarantee, such as
-//! [`Rotation`], never hold an invalid value (ADR 0023).
+//! in a [`Transform`]. Types that carry a guarantee, such as [`Rotation`]
+//! and [`Transform`], never hold an invalid value (ADR 0023).
 //!
 //! Positions and offsets share the vector types. Where the meaning changes
 //! the result, the method name says which one is meant (ADR 0023).
 
 #[macro_use]
 mod vector_ops;
+mod matrix4;
 mod rotation;
+mod transform;
 mod vector2;
 mod vector3;
 
+pub use matrix4::Matrix4;
 pub use rotation::{Rotation, RotationError};
+pub use transform::{Transform, TransformError};
 pub use vector2::Vector2;
 pub use vector3::Vector3;
 
