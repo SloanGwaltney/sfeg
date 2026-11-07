@@ -2,7 +2,7 @@ use std::fmt;
 
 use bytemuck::NoUninit;
 
-use super::Vector3;
+use super::{Rotation, Transform, Vector3};
 
 /// A 4x4 matrix that places things in space: a scale, then a rotation, then
 /// a move, possibly combined through a hierarchy.
@@ -80,6 +80,35 @@ impl Matrix4 {
 
     pub(crate) fn from_glam(m: glam::Mat4) -> Matrix4 {
         Matrix4(m)
+    }
+
+    /// Whether a zero scale flattens space, so the matrix has no inverse
+    /// and no single rotation.
+    pub(crate) fn is_flat(self) -> bool {
+        self.0.determinant() == 0.0
+    }
+
+    /// The transform closest to this matrix, or `None` if the matrix is
+    /// flat or the parts aren't finite.
+    ///
+    /// Position is exact. Rotation and scale are approximate when the
+    /// matrix is skewed, such as a rotated child under a non-uniformly
+    /// scaled parent (ADR 0013). A mirrored matrix comes out with a
+    /// negative x scale.
+    pub(crate) fn to_transform_approx(self) -> Option<Transform> {
+        if self.is_flat() {
+            return None;
+        }
+        let (scale, rotation, position) = self.0.to_scale_rotation_translation();
+        // A skewed matrix gives a quaternion that isn't quite unit length.
+        let [x, y, z, w] = rotation.to_array();
+        let rotation = Rotation::from_quat_normalized(x, y, z, w).ok()?;
+        Transform::new(
+            Vector3::from_glam(position),
+            rotation,
+            Vector3::from_glam(scale),
+        )
+        .ok()
     }
 }
 

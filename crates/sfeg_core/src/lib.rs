@@ -20,5 +20,5 @@ pub use core_loop::Core;
 pub use game_object::GameObject;
 pub use game_state::{GameState, GameStateTickContext};
 pub use handle::{Handle, ObjectHandle};
-pub use scene::{Scene, TickContext, TypedHandleError};
+pub use scene::{HierarchyError, Parent, Scene, TickContext, TypedHandleError};
 pub use time::{GameTime, TickRate, TickRateError};

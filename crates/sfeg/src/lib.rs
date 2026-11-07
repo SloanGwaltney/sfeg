@@ -5,6 +5,6 @@
 
 pub use sfeg_core::math;
 pub use sfeg_core::{
-    Core, GameObject, GameState, GameStateTickContext, GameTime, Handle, ObjectHandle, Scene,
-    TickContext, TickRate, TickRateError, TypedHandleError,
+    Core, GameObject, GameState, GameStateTickContext, GameTime, Handle, HierarchyError,
+    ObjectHandle, Parent, Scene, TickContext, TickRate, TickRateError, TypedHandleError,
 };
