@@ -6,6 +6,7 @@ use crate::camera::ActiveCamera;
 use crate::frame::FrameContext;
 use crate::game_object::GameObject;
 use crate::handle::{Handle, ObjectHandle};
+use crate::input::InputView;
 use crate::math::Transform;
 use crate::time::GameTime;
 
@@ -182,7 +183,7 @@ impl Scene {
 
     /// Runs every object's tick, in slot order, then applies the spawns and
     /// despawns they asked for.
-    pub(crate) fn tick(&mut self, game_time: &GameTime) {
+    pub(crate) fn tick(&mut self, game_time: &GameTime, tick_input: &InputView) {
         self.set_previous_locals_to_current();
         // Spawns are deferred, so no slots are added while this runs.
         for index in 0..self.slots.len() {
@@ -199,6 +200,7 @@ impl Scene {
 
             object.tick(&mut TickContext {
                 game_time,
+                tick_input,
                 current_scene: self,
                 self_handle,
             });
@@ -396,6 +398,7 @@ fn downcast_mut<T: GameObject>(object: &mut dyn GameObject) -> &mut T {
 /// despawns wait until the tick ends, after every object has ticked.
 pub struct TickContext<'a> {
     game_time: &'a GameTime,
+    tick_input: &'a InputView,
     current_scene: &'a mut Scene,
     self_handle: ObjectHandle,
 }
@@ -404,6 +407,13 @@ impl TickContext<'_> {
     /// Game time at the start of this tick.
     pub fn game_time(&self) -> &GameTime {
         self.game_time
+    }
+
+    /// The tick view of the input actions: "just pressed" means since the
+    /// last tick (ADR 0008). Gameplay reads input here, so it runs the same
+    /// in headless runs.
+    pub fn tick_input(&self) -> &InputView {
+        self.tick_input
     }
 
     /// The handle of the object that is ticking.
@@ -588,7 +598,7 @@ mod tests {
     fn run_ticks(scene: &mut Scene, count: u64) {
         let mut game_time = GameTime::new(TickRate::DEFAULT);
         for _ in 0..count {
-            scene.tick(&game_time);
+            scene.tick(&game_time, &InputView::empty());
             game_time.advance_one_tick();
         }
     }
