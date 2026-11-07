@@ -3,20 +3,27 @@
 //! It owns the window, drives the core once per rendered frame, and hands
 //! each frame to `sfeg_wgpu` (ADR 0007). Games start it with [`run`].
 //!
-//! Input isn't passed to the core yet.
+//! Key presses and focus changes go to the core as input events
+//! (ADR 0016).
+
+mod key_code;
 
 use std::error::Error;
 use std::fmt;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use sfeg_core::platform::InputEvent;
 use sfeg_core::{Core, GameState};
 use sfeg_wgpu::{Renderer, RendererError};
 use winit::application::ApplicationHandler;
 use winit::dpi::LogicalSize;
-use winit::event::WindowEvent;
+use winit::event::{ElementState, KeyEvent, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, EventLoop};
+use winit::keyboard::PhysicalKey;
 use winit::window::{Window, WindowId};
+
+use crate::key_code::to_sfeg_key_code;
 
 /// How the game's window opens.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -160,9 +167,39 @@ impl<G: GameState> ApplicationHandler for Runner<G> {
                 }
             }
             WindowEvent::RedrawRequested => self.run_frame(),
+            WindowEvent::KeyboardInput {
+                event,
+                is_synthetic,
+                ..
+            } => {
+                // Synthetic events are winit's guesses about keys held while
+                // unfocused. Focus loss already releases everything, and a
+                // key held when focus returns counts once it is pressed
+                // again.
+                if !is_synthetic && let Some(input_event) = to_input_event(&event) {
+                    self.core.apply_input_event(input_event);
+                }
+            }
+            WindowEvent::Focused(false) => self.core.apply_input_event(InputEvent::FocusLost),
             _ => {}
         }
     }
+}
+
+/// The input event for a key, or `None` for the operating system's key
+/// repeat and for keys SFEG doesn't support.
+fn to_input_event(event: &KeyEvent) -> Option<InputEvent> {
+    if event.repeat {
+        return None;
+    }
+    let PhysicalKey::Code(code) = event.physical_key else {
+        return None;
+    };
+    let key = to_sfeg_key_code(code)?;
+    Some(match event.state {
+        ElementState::Pressed => InputEvent::KeyPressed(key),
+        ElementState::Released => InputEvent::KeyReleased(key),
+    })
 }
 
 /// Why [`run`] stopped with an error.

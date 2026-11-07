@@ -1,0 +1,11 @@
+# The demo's default controls (ADR 0016). Keys are physical positions, so
+# WASD is in the same place on every keyboard layout.
+
+[button.jump]
+keys = ["Space"]
+
+[axis_2d.move]
+up = ["KeyW", "ArrowUp"]
+down = ["KeyS", "ArrowDown"]
+left = ["KeyA", "ArrowLeft"]
+right = ["KeyD", "ArrowRight"]
