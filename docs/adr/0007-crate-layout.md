@@ -59,3 +59,5 @@ Further crates are split out only when a vendor library actually in use needs it
 - The four crates are versioned and released together.
 
 ## Notes
+
+- 2026-11-07: A fifth crate, `sfeg_macros`, holds SFEG's derive macros, starting with `#[derive(Action)]` ([0016](0016-input-actions.md)). Rust requires procedural macros to live in their own crate. Games reach it through the `sfeg` facade, like the other crates, and it is versioned and released with them.
