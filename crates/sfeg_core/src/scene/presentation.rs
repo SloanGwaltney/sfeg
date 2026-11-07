@@ -66,9 +66,9 @@ impl Scene {
             .filter(|camera| self.is_alive(camera.object()))
     }
 
-    /// Records every object's local transform as its previous one. Runs
-    /// before each tick.
-    pub(super) fn remember_previous_locals(&mut self) {
+    /// Sets every object's previous local transform to its current one, so
+    /// drawing can blend from it. Runs before each tick.
+    pub(super) fn set_previous_locals_to_current(&mut self) {
         for slot in &mut self.slots {
             if let Some(entry) = &mut slot.entry {
                 entry.previous_local = entry.local;

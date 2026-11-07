@@ -183,7 +183,7 @@ impl Scene {
     /// Runs every object's tick, in slot order, then applies the spawns and
     /// despawns they asked for.
     pub(crate) fn tick(&mut self, game_time: &GameTime) {
-        self.remember_previous_locals();
+        self.set_previous_locals_to_current();
         // Spawns are deferred, so no slots are added while this runs.
         for index in 0..self.slots.len() {
             let slot = &mut self.slots[index];
