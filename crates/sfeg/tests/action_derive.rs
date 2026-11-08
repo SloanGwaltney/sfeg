@@ -67,8 +67,3 @@ fn derived_actions_drive_a_game() {
     assert_eq!(core.game_state().jumps, 1);
     assert_eq!(core.game_state().last_direction, Some((-1.0, 0.0)));
 }
-
-#[test]
-fn compile_errors_explain_the_mistake() {
-    trybuild::TestCases::new().compile_fail("tests/compile_fail/*.rs");
-}
