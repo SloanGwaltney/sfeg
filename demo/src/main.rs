@@ -8,8 +8,9 @@
 use sfeg::input::{Action, ActionRegistry, InputBindings};
 use sfeg::math::{Rotation, Transform, Vector3};
 use sfeg::{
-    Color, Core, DrawContext, GameObject, GameState, GameStateTickContext, Handle,
-    MaxTicksPerFrame, Parent, Perspective, Scene, TickContext, TickRate, WindowSettings,
+    Color, Core, CoreSettings, DrawContext, GameObject, GameState, GameStateTickContext, Handle,
+    MaxTicksPerFrame, Parent, Perspective, Scene, TickContext, TickRate, TransformInterpolation,
+    WindowSettings,
 };
 
 /// Jumps.
@@ -183,9 +184,12 @@ fn setup() -> (Core<HelloGame>, Handle<Walker>, Handle<Hat>) {
     let core = Core::new(
         HelloGame,
         scene,
-        TickRate::DEFAULT,
-        MaxTicksPerFrame::DEFAULT,
-        input_bindings(),
+        CoreSettings {
+            tick_rate: TickRate::DEFAULT,
+            max_ticks_per_frame: MaxTicksPerFrame::DEFAULT,
+            transform_interpolation: TransformInterpolation::Enabled,
+            input_bindings: input_bindings(),
+        },
     );
     (core, walker, hat)
 }

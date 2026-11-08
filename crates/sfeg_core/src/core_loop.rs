@@ -36,21 +36,19 @@ pub struct Core<G: GameState> {
 }
 
 impl<G: GameState> Core<G> {
-    /// Creates a core that runs `game_state` at `tick_rate`, starting in
-    /// `first_scene`, with its input actions bound by `input_bindings`.
-    /// [`Core::advance`] runs at most `max_ticks_per_frame` ticks per call.
+    /// Creates a core that runs `game_state`, starting in `first_scene`,
+    /// with `settings`.
     ///
     /// A game can't start without a scene. Its setup always builds the
     /// first one (ADR 0006), even if it starts empty with
-    /// [`Scene::new`]. A game that takes no input passes
-    /// [`InputBindings::none`].
-    pub fn new(
-        game_state: G,
-        first_scene: Scene,
-        tick_rate: TickRate,
-        max_ticks_per_frame: MaxTicksPerFrame,
-        input_bindings: InputBindings,
-    ) -> Core<G> {
+    /// [`Scene::new`].
+    pub fn new(game_state: G, first_scene: Scene, settings: CoreSettings) -> Core<G> {
+        let CoreSettings {
+            tick_rate,
+            max_ticks_per_frame,
+            transform_interpolation,
+            input_bindings,
+        } = settings;
         Core {
             game_state,
             current_scene: first_scene,
@@ -58,7 +56,7 @@ impl<G: GameState> Core<G> {
             max_ticks_per_frame,
             owed_real_time: 0,
             interpolation_factor: 0.0,
-            transform_interpolation: TransformInterpolation::default(),
+            transform_interpolation,
             input: InputState::new(input_bindings),
         }
     }
@@ -194,6 +192,41 @@ impl<G: GameState> Core<G> {
     }
 }
 
+/// How a new [`Core`] runs, passed to [`Core::new`].
+///
+/// Every field must be set. There is deliberately no `Default`, so each
+/// setting is a choice written where the game creates its core, even when
+/// the choice is a default such as [`TickRate::DEFAULT`]. A new setting
+/// added in a later SFEG version is a compile error in every game until
+/// the game sets it.
+///
+/// Each field's type checks its own value, such as [`TickRate::new`]
+/// rejecting zero, so a `CoreSettings` is always valid once built.
+///
+/// ```ignore
+/// let settings = CoreSettings {
+///     tick_rate: TickRate::DEFAULT,
+///     max_ticks_per_frame: MaxTicksPerFrame::DEFAULT,
+///     transform_interpolation: TransformInterpolation::Enabled,
+///     input_bindings: InputBindings::none(),
+/// };
+/// ```
+#[derive(Debug, Clone)]
+pub struct CoreSettings {
+    /// How many ticks run per second of game time (ADR 0008).
+    pub tick_rate: TickRate,
+    /// The most ticks one [`Core::advance`] runs. Past that, the game slows
+    /// down instead of falling further behind.
+    pub max_ticks_per_frame: MaxTicksPerFrame,
+    /// Whether drawing blends transforms between the last two ticks
+    /// (ADR 0013). [`Core::set_transform_interpolation`] can change it
+    /// later.
+    pub transform_interpolation: TransformInterpolation,
+    /// Which keys drive each input action (ADR 0016). A game that takes no
+    /// input sets [`InputBindings::none`].
+    pub input_bindings: InputBindings,
+}
+
 /// What one call to [`Core::advance`] did.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AdvanceSummary {
@@ -226,14 +259,17 @@ mod tests {
     use crate::math::Transform;
     use crate::scene::Parent;
 
+    fn settings(input_bindings: InputBindings) -> CoreSettings {
+        CoreSettings {
+            tick_rate: TickRate::DEFAULT,
+            max_ticks_per_frame: MaxTicksPerFrame::DEFAULT,
+            transform_interpolation: TransformInterpolation::Enabled,
+            input_bindings,
+        }
+    }
+
     fn new_core<G: GameState>(game_state: G) -> Core<G> {
-        Core::new(
-            game_state,
-            Scene::new(),
-            TickRate::DEFAULT,
-            MaxTicksPerFrame::DEFAULT,
-            InputBindings::none(),
-        )
+        Core::new(game_state, Scene::new(), settings(InputBindings::none()))
     }
 
     #[derive(Default)]
@@ -455,13 +491,7 @@ mod tests {
         actions.register::<Jump>().unwrap();
         let bindings =
             InputBindings::from_toml("[button.jump]\nkeys = [\"Space\"]", &actions).unwrap();
-        let mut core = Core::new(
-            RecordJumps::default(),
-            Scene::new(),
-            TickRate::DEFAULT,
-            MaxTicksPerFrame::DEFAULT,
-            bindings,
-        );
+        let mut core = Core::new(RecordJumps::default(), Scene::new(), settings(bindings));
         core.apply_input_event(InputEvent::KeyPressed(crate::input::KeyCode::Space));
         // No tick fits in this frame, so the tick sees the press next frame.
         core.advance(Duration::from_millis(10));

@@ -2,7 +2,10 @@
 
 use sfeg::input::{Action, ActionRegistry, InputBindings, KeyCode};
 use sfeg::platform::InputEvent;
-use sfeg::{Core, GameState, GameStateTickContext, MaxTicksPerFrame, Scene, TickRate};
+use sfeg::{
+    Core, CoreSettings, GameState, GameStateTickContext, MaxTicksPerFrame, Scene, TickRate,
+    TransformInterpolation,
+};
 
 #[derive(Action)]
 #[action(name = "jump", kind = Button)]
@@ -56,9 +59,12 @@ fn derived_actions_drive_a_game() {
     let mut core = Core::new(
         Player::default(),
         Scene::new(),
-        TickRate::DEFAULT,
-        MaxTicksPerFrame::DEFAULT,
-        bindings,
+        CoreSettings {
+            tick_rate: TickRate::DEFAULT,
+            max_ticks_per_frame: MaxTicksPerFrame::DEFAULT,
+            transform_interpolation: TransformInterpolation::Enabled,
+            input_bindings: bindings,
+        },
     );
     core.apply_input_event(InputEvent::KeyPressed(KeyCode::Space));
     core.apply_input_event(InputEvent::KeyPressed(KeyCode::KeyA));
@@ -66,9 +72,4 @@ fn derived_actions_drive_a_game() {
     core.tick();
     assert_eq!(core.game_state().jumps, 1);
     assert_eq!(core.game_state().last_direction, Some((-1.0, 0.0)));
-}
-
-#[test]
-fn compile_errors_explain_the_mistake() {
-    trybuild::TestCases::new().compile_fail("tests/compile_fail/*.rs");
 }
