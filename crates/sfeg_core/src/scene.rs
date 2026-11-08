@@ -5,9 +5,11 @@ use std::fmt;
 use crate::camera::ActiveCamera;
 use crate::frame::FrameContext;
 use crate::game_object::GameObject;
+use crate::game_state::GameState;
 use crate::handle::{Handle, ObjectHandle};
 use crate::input::InputView;
 use crate::math::Transform;
+use crate::scene_state::{SceneState, SceneStateTickContext};
 use crate::time::GameTime;
 
 mod hierarchy;
@@ -27,7 +29,12 @@ pub use presentation::TransformInterpolation;
 /// Objects nest: each has a [`Parent`], and its transform is local to that
 /// parent (ADR 0013). Moving a parent moves its children. Despawning a
 /// parent despawns its children too.
+///
+/// Each scene has one scene state, created with the scene and dropped with
+/// it (ADR 0012).
 pub struct Scene {
+    /// `None` only while the scene state runs its own tick.
+    scene_state: Option<Box<dyn SceneState>>,
     slots: Vec<Slot>,
     /// Free slot indices, reused last-in, first-out.
     free: Vec<usize>,
@@ -83,9 +90,11 @@ enum Despawn {
 }
 
 impl Scene {
-    /// An empty scene.
-    pub fn new() -> Scene {
+    /// An empty scene with `scene_state` as its scene state (ADR 0012). A
+    /// scene without one passes `()`.
+    pub fn new(scene_state: impl SceneState) -> Scene {
         Scene {
+            scene_state: Some(Box::new(scene_state)),
             slots: Vec::new(),
             free: Vec::new(),
             scene_commands: SceneCommands::default(),
@@ -119,6 +128,18 @@ impl Scene {
         let handle = self.reserve_now();
         self.insert(handle, Box::new(object), TypeId::of::<T>(), parent, local);
         Ok(Handle::new(handle))
+    }
+
+    /// The scene state, or `None` if it isn't an `S`.
+    pub fn scene_state<S: SceneState>(&self) -> Option<&S> {
+        let scene_state: &dyn Any = self.scene_state.as_deref()?;
+        scene_state.downcast_ref()
+    }
+
+    /// The scene state, to change it, or `None` if it isn't an `S`.
+    pub fn scene_state_mut<S: SceneState>(&mut self) -> Option<&mut S> {
+        let scene_state: &mut dyn Any = self.scene_state.as_deref_mut()?;
+        scene_state.downcast_mut()
     }
 
     /// The object `handle` refers to, or `None` if it is gone.
@@ -181,10 +202,26 @@ impl Scene {
         self.len() == 0
     }
 
-    /// Runs every object's tick, in slot order, then applies the spawns and
-    /// despawns they asked for.
-    pub(crate) fn tick(&mut self, game_time: &GameTime, tick_input: &InputView) {
+    /// Runs the scene state's tick, then every object's in slot order, then
+    /// applies the spawns and despawns they queued (ADR 0012).
+    pub(crate) fn tick(
+        &mut self,
+        game_time: &GameTime,
+        tick_input: &InputView,
+        game_state: &mut dyn Any,
+    ) {
         self.set_previous_locals_to_current();
+        let mut scene_state = self
+            .scene_state
+            .take()
+            .expect("the scene state is only taken out during its own tick");
+        scene_state.tick(&mut SceneStateTickContext::new(
+            game_time,
+            tick_input,
+            &mut *game_state,
+            self,
+        ));
+        self.scene_state = Some(scene_state);
         // Spawns are deferred, so no slots are added while this runs.
         for index in 0..self.slots.len() {
             let slot = &mut self.slots[index];
@@ -201,6 +238,7 @@ impl Scene {
             object.tick(&mut TickContext {
                 game_time,
                 tick_input,
+                game_state: &mut *game_state,
                 current_scene: self,
                 self_handle,
             });
@@ -213,8 +251,12 @@ impl Scene {
         self.apply_commands();
     }
 
-    /// Runs every object's frame, in slot order.
+    /// Runs the scene state's frame, then every object's in slot order.
     pub(crate) fn frame(&mut self, ctx: &mut FrameContext) {
+        self.scene_state
+            .as_mut()
+            .expect("the scene state is only taken out during a tick")
+            .frame(ctx);
         for slot in &mut self.slots {
             if let Some(entry) = &mut slot.entry {
                 entry
@@ -277,6 +319,39 @@ impl Scene {
                 generation: 0,
             },
         }
+    }
+
+    /// Queues `object` to spawn when the tick ends and returns its handle.
+    pub(crate) fn queue_spawn<T: GameObject>(
+        &mut self,
+        object: T,
+        parent: Parent,
+        local: Transform,
+    ) -> Handle<T> {
+        let handle = self.reserve_deferred();
+        self.scene_commands.spawns.push(PendingSpawn {
+            handle,
+            object: Box::new(object),
+            type_id: TypeId::of::<T>(),
+            parent: parent.handle(),
+            local,
+        });
+        Handle::new(handle)
+    }
+
+    /// Queues `handle` to despawn with its children when the tick ends.
+    pub(crate) fn queue_despawn_with_children(&mut self, handle: ObjectHandle) {
+        self.scene_commands
+            .despawns
+            .push(Despawn::WithChildren(handle));
+    }
+
+    /// Queues `handle` to despawn when the tick ends, moving its children
+    /// to the root first.
+    pub(crate) fn queue_despawn_keep_children(&mut self, handle: ObjectHandle) {
+        self.scene_commands
+            .despawns
+            .push(Despawn::KeepChildren(handle));
     }
 
     /// Picks a slot for an object that spawns when the tick ends. The slot
@@ -371,12 +446,6 @@ impl Scene {
     }
 }
 
-impl Default for Scene {
-    fn default() -> Scene {
-        Scene::new()
-    }
-}
-
 fn downcast_ref<T: GameObject>(object: &dyn GameObject) -> &T {
     let object: &dyn Any = object;
     object
@@ -394,11 +463,13 @@ fn downcast_mut<T: GameObject>(object: &mut dyn GameObject) -> &mut T {
 /// What a game object's tick can see and do (ADR 0004, 0008).
 ///
 /// It reaches the object's own transform, other objects and their
-/// transforms by handle, and queues spawns and despawns. Spawns and
-/// despawns wait until the tick ends, after every object has ticked.
+/// transforms by handle, the game state and scene state by type
+/// (ADR 0012), and queues spawns and despawns. Spawns and despawns wait
+/// until the tick ends, after every object has ticked.
 pub struct TickContext<'a> {
     game_time: &'a GameTime,
     tick_input: &'a InputView,
+    game_state: &'a mut dyn Any,
     current_scene: &'a mut Scene,
     self_handle: ObjectHandle,
 }
@@ -414,6 +485,29 @@ impl TickContext<'_> {
     /// in headless runs.
     pub fn tick_input(&self) -> &InputView {
         self.tick_input
+    }
+
+    /// The game state, or `None` if it isn't a `G` (ADR 0012).
+    pub fn game_state<G: GameState>(&self) -> Option<&G> {
+        self.game_state.downcast_ref()
+    }
+
+    /// The game state, to change it, or `None` if it isn't a `G`
+    /// (ADR 0012).
+    pub fn game_state_mut<G: GameState>(&mut self) -> Option<&mut G> {
+        self.game_state.downcast_mut()
+    }
+
+    /// The current scene's scene state, or `None` if it isn't an `S`
+    /// (ADR 0012).
+    pub fn scene_state<S: SceneState>(&self) -> Option<&S> {
+        self.current_scene.scene_state()
+    }
+
+    /// The current scene's scene state, to change it, or `None` if it isn't
+    /// an `S` (ADR 0012).
+    pub fn scene_state_mut<S: SceneState>(&mut self) -> Option<&mut S> {
+        self.current_scene.scene_state_mut()
     }
 
     /// The handle of the object that is ticking.
@@ -499,15 +593,7 @@ impl TickContext<'_> {
         parent: impl Into<Parent>,
         local: Transform,
     ) -> Handle<T> {
-        let handle = self.current_scene.reserve_deferred();
-        self.current_scene.scene_commands.spawns.push(PendingSpawn {
-            handle,
-            object: Box::new(object),
-            type_id: TypeId::of::<T>(),
-            parent: parent.into().handle(),
-            local,
-        });
-        Handle::new(handle)
+        self.current_scene.queue_spawn(object, parent.into(), local)
     }
 
     /// Queues the object `handle` refers to, which may be this one, to
@@ -518,9 +604,7 @@ impl TickContext<'_> {
     /// [`TickContext::despawn_deferred_keep_children`].
     pub fn despawn_deferred(&mut self, handle: impl Into<ObjectHandle>) {
         self.current_scene
-            .scene_commands
-            .despawns
-            .push(Despawn::WithChildren(handle.into()));
+            .queue_despawn_with_children(handle.into());
     }
 
     /// Like [`TickContext::despawn_deferred`], but first moves the object's
@@ -533,9 +617,7 @@ impl TickContext<'_> {
     /// zero scale, is despawned with the object and a warning is logged.
     pub fn despawn_deferred_keep_children(&mut self, handle: impl Into<ObjectHandle>) {
         self.current_scene
-            .scene_commands
-            .despawns
-            .push(Despawn::KeepChildren(handle.into()));
+            .queue_despawn_keep_children(handle.into());
     }
 }
 
@@ -598,7 +680,7 @@ mod tests {
     fn run_ticks(scene: &mut Scene, count: u64) {
         let mut game_time = GameTime::new(TickRate::DEFAULT);
         for _ in 0..count {
-            scene.tick(&game_time, &InputView::empty());
+            scene.tick(&game_time, &InputView::empty(), &mut ());
             game_time.advance_one_tick();
         }
     }
@@ -609,7 +691,7 @@ mod tests {
 
     #[test]
     fn objects_move_their_own_transform() {
-        let mut scene = Scene::new();
+        let mut scene = Scene::new(());
         let walker = scene
             .spawn_immediate(Walker, Parent::Root, at(10.0))
             .unwrap();
@@ -623,7 +705,7 @@ mod tests {
 
     #[test]
     fn spawns_wait_until_the_tick_ends() {
-        let mut scene = Scene::new();
+        let mut scene = Scene::new(());
         let spawner = scene
             .spawn_immediate(
                 Probe::new(|ctx| {
@@ -656,7 +738,7 @@ mod tests {
 
     #[test]
     fn despawned_objects_finish_the_tick() {
-        let mut scene = Scene::new();
+        let mut scene = Scene::new(());
         let quitter = scene
             .spawn_immediate(
                 Probe::new(|ctx| {
@@ -692,7 +774,7 @@ mod tests {
 
     #[test]
     fn old_handles_never_find_a_reused_slot() {
-        let mut scene = Scene::new();
+        let mut scene = Scene::new(());
         let first = scene
             .spawn_immediate(
                 Probe::new(|ctx| {
@@ -720,7 +802,7 @@ mod tests {
 
     #[test]
     fn spawn_then_despawn_in_one_tick_ends_despawned() {
-        let mut scene = Scene::new();
+        let mut scene = Scene::new(());
         scene
             .spawn_immediate(
                 Probe::new(|ctx| {
@@ -739,7 +821,7 @@ mod tests {
 
     #[test]
     fn deferred_spawns_fill_free_and_new_slots() {
-        let mut scene = Scene::new();
+        let mut scene = Scene::new(());
         let doomed = scene
             .spawn_immediate(Walker, Parent::Root, Transform::IDENTITY)
             .unwrap();
@@ -796,7 +878,7 @@ mod tests {
             }
         }
 
-        let mut scene = Scene::new();
+        let mut scene = Scene::new(());
         let target = scene
             .spawn_immediate(Target { hits: 0 }, Parent::Root, Transform::IDENTITY)
             .unwrap();
@@ -813,7 +895,7 @@ mod tests {
 
     #[test]
     fn an_object_cant_find_itself_during_its_own_tick() {
-        let mut scene = Scene::new();
+        let mut scene = Scene::new(());
         scene
             .spawn_immediate(
                 Probe::new(|ctx| {
@@ -832,7 +914,7 @@ mod tests {
 
     #[test]
     fn typed_checks_the_type() {
-        let mut scene = Scene::new();
+        let mut scene = Scene::new(());
         let walker = scene
             .spawn_immediate(Walker, Parent::Root, Transform::IDENTITY)
             .unwrap()
@@ -846,7 +928,7 @@ mod tests {
 
     #[test]
     fn despawning_a_gone_object_does_nothing() {
-        let mut scene = Scene::new();
+        let mut scene = Scene::new(());
         scene
             .spawn_immediate(
                 Probe::new(|ctx| {
@@ -866,7 +948,7 @@ mod tests {
 
     #[test]
     fn out_of_generations_retires_the_slot() {
-        let mut scene = Scene::new();
+        let mut scene = Scene::new(());
         let handle = scene
             .spawn_immediate(Walker, Parent::Root, Transform::IDENTITY)
             .unwrap()
@@ -886,7 +968,7 @@ mod tests {
 
     #[test]
     fn handles_debug_without_the_scene() {
-        let mut scene = Scene::new();
+        let mut scene = Scene::new(());
         let walker = scene
             .spawn_immediate(Walker, Parent::Root, Transform::IDENTITY)
             .unwrap();

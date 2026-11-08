@@ -58,7 +58,7 @@ fn derived_actions_drive_a_game() {
     .unwrap();
     let mut core = Core::new(
         Player::default(),
-        Scene::new(),
+        Scene::new(()),
         CoreSettings {
             tick_rate: TickRate::DEFAULT,
             max_ticks_per_frame: MaxTicksPerFrame::DEFAULT,

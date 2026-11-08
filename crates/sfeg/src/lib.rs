@@ -10,8 +10,8 @@ pub use sfeg_core::{
     ActiveCamera, ActiveCameraError, AdvanceSummary, Color, ColorError, Core, CoreSettings,
     DrawContext, FrameContext, GameObject, GameState, GameStateTickContext, GameTime, Handle,
     HierarchyError, MaxTicksPerFrame, MaxTicksPerFrameError, ObjectHandle, Orthographic, Parent,
-    Perspective, Projection, ProjectionError, Scene, TickContext, TickRate, TickRateError,
-    TransformInterpolation, TypedHandleError,
+    Perspective, Projection, ProjectionError, Scene, SceneState, SceneStateTickContext,
+    TickContext, TickRate, TickRateError, TransformInterpolation, TypedHandleError,
 };
 pub use sfeg_core::{math, platform};
 pub use sfeg_winit::{RunError, WindowSettings, run};

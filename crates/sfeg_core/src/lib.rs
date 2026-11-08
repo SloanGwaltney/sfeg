@@ -4,7 +4,8 @@
 //! depends on winit, wgpu, or any other platform library (ADR 0007), so it
 //! builds and tests on its own.
 //!
-//! Right now it holds the game state and one [`Scene`] of game objects,
+//! Right now it holds the game state and one [`Scene`] of game objects
+//! with its scene state,
 //! advances them one fixed tick at a time with [`Core::tick`] or by real
 //! elapsed time with [`Core::advance`], collects what they draw with
 //! [`Core::draw`], and provides the [`math`] types. What the runner and
@@ -22,6 +23,7 @@ pub mod input;
 pub mod math;
 pub mod platform;
 mod scene;
+mod scene_state;
 mod time;
 
 pub use camera::{
@@ -37,4 +39,5 @@ pub use handle::{Handle, ObjectHandle};
 pub use scene::{
     HierarchyError, Parent, Scene, TickContext, TransformInterpolation, TypedHandleError,
 };
+pub use scene_state::{SceneState, SceneStateTickContext};
 pub use time::{GameTime, MaxTicksPerFrame, MaxTicksPerFrameError, TickRate, TickRateError};

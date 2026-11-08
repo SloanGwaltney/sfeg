@@ -8,7 +8,8 @@ use crate::time::GameTime;
 /// command queue and no access to other objects. Code that changes the
 /// game belongs in `tick`.
 ///
-/// The same context is passed to game objects and to the game state.
+/// The same context is passed to game objects, the game state, and the
+/// scene state.
 pub struct FrameContext<'a> {
     game_time: &'a GameTime,
     real_dt: f32,

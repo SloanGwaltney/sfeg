@@ -489,6 +489,7 @@ mod tests {
         scene.tick(
             &GameTime::new(TickRate::DEFAULT),
             &crate::input::InputView::empty(),
+            &mut (),
         );
     }
 
@@ -529,7 +530,7 @@ mod tests {
 
     #[test]
     fn children_follow_their_parent() {
-        let mut scene = Scene::new();
+        let mut scene = Scene::new(());
         let (parent, child) = turned_parent_and_child(&mut scene);
         assert_vector_close(
             scene.world_position_of(child).unwrap(),
@@ -553,7 +554,7 @@ mod tests {
 
     #[test]
     fn spawn_immediate_under_a_gone_parent_fails() {
-        let mut scene = Scene::new();
+        let mut scene = Scene::new(());
         let parent = spawn(&mut scene, Parent::Root, Transform::IDENTITY);
         scene.remove_with_children(parent);
         assert_eq!(
@@ -565,7 +566,7 @@ mod tests {
 
     #[test]
     fn deferred_spawn_under_a_parent_spawned_the_same_tick() {
-        let mut scene = Scene::new();
+        let mut scene = Scene::new(());
         scene
             .spawn_immediate(
                 OnFirstTick(|ctx| {
@@ -594,7 +595,7 @@ mod tests {
 
     #[test]
     fn deferred_spawn_under_a_parent_gone_by_tick_end_fails() {
-        let mut scene = Scene::new();
+        let mut scene = Scene::new(());
         let doomed = spawn(&mut scene, Parent::Root, Transform::IDENTITY);
         let freed = spawn(&mut scene, Parent::Root, Transform::IDENTITY);
         scene.remove_with_children(freed);
@@ -623,7 +624,7 @@ mod tests {
         assert_eq!(scene.len(), 1);
 
         // Now spawn under a parent that is already gone.
-        let mut scene = Scene::new();
+        let mut scene = Scene::new(());
         let gone = spawn(&mut scene, Parent::Root, Transform::IDENTITY);
         scene.remove_with_children(gone);
         scene
@@ -675,7 +676,7 @@ mod tests {
 
     #[test]
     fn despawn_takes_the_whole_subtree() {
-        let mut scene = Scene::new();
+        let mut scene = Scene::new(());
         let root = spawn(&mut scene, Parent::Root, Transform::IDENTITY);
         let child = spawn(&mut scene, root, Transform::IDENTITY);
         let grandchild = spawn(&mut scene, child, Transform::IDENTITY);
@@ -690,7 +691,7 @@ mod tests {
 
     #[test]
     fn despawn_keep_children_moves_them_to_the_root_in_place() {
-        let mut scene = Scene::new();
+        let mut scene = Scene::new(());
         let (parent, child) = turned_parent_and_child(&mut scene);
         let grandchild = spawn(&mut scene, child, at(0.0, 2.0));
         let before = scene.world_position_of(grandchild).unwrap();
@@ -708,7 +709,7 @@ mod tests {
 
     #[test]
     fn despawn_keep_children_drops_a_child_it_cant_keep() {
-        let mut scene = Scene::new();
+        let mut scene = Scene::new(());
         let flat = spawn(
             &mut scene,
             Parent::Root,
@@ -722,7 +723,7 @@ mod tests {
 
     #[test]
     fn cycles_are_errors_and_change_nothing() {
-        let mut scene = Scene::new();
+        let mut scene = Scene::new(());
         let root = spawn(&mut scene, Parent::Root, Transform::IDENTITY);
         let child = spawn(&mut scene, root, Transform::IDENTITY);
         let grandchild = spawn(&mut scene, child, Transform::IDENTITY);
@@ -740,7 +741,7 @@ mod tests {
 
     #[test]
     fn reparenting_gone_objects_is_an_error() {
-        let mut scene = Scene::new();
+        let mut scene = Scene::new(());
         let a = spawn(&mut scene, Parent::Root, Transform::IDENTITY);
         let b = spawn(&mut scene, Parent::Root, Transform::IDENTITY);
         scene.remove_with_children(b);
@@ -753,7 +754,7 @@ mod tests {
 
     #[test]
     fn keep_local_jumps_and_keep_world_stays() {
-        let mut scene = Scene::new();
+        let mut scene = Scene::new(());
         let (parent, _) = turned_parent_and_child(&mut scene);
         let jumper = spawn(&mut scene, Parent::Root, at(1.0, 0.0));
         let stayer = spawn(&mut scene, Parent::Root, at(1.0, 0.0));
@@ -787,7 +788,7 @@ mod tests {
 
     #[test]
     fn keep_world_into_a_flat_parent_fails() {
-        let mut scene = Scene::new();
+        let mut scene = Scene::new(());
         let flat = spawn(
             &mut scene,
             Parent::Root,
@@ -804,7 +805,7 @@ mod tests {
 
     #[test]
     fn keep_world_position_is_exact_under_non_uniform_scale() {
-        let mut scene = Scene::new();
+        let mut scene = Scene::new(());
         let stretched = Transform::new(
             Vector3::new(1.0, 2.0, 0.0),
             Rotation::IDENTITY,
@@ -828,7 +829,7 @@ mod tests {
 
     #[test]
     fn set_world_position_reaches_through_parents() {
-        let mut scene = Scene::new();
+        let mut scene = Scene::new(());
         let (_, child) = turned_parent_and_child(&mut scene);
         let target = Vector3::new(-3.0, 4.0, 1.0);
         scene.set_world_position_of(child, target).unwrap();
@@ -850,7 +851,7 @@ mod tests {
 
     #[test]
     fn reparenting_during_a_tick_applies_immediately() {
-        let mut scene = Scene::new();
+        let mut scene = Scene::new(());
         let parent = spawn(&mut scene, Parent::Root, at(10.0, 0.0));
         scene
             .spawn_immediate(
