@@ -7,10 +7,10 @@
 //! tests, to check what [`Core::draw`] drew.
 
 pub use sfeg_core::{
-    ActiveCamera, ActiveCameraError, AdvanceSummary, Color, ColorError, Core, DrawContext,
-    FrameContext, GameObject, GameState, GameStateTickContext, GameTime, Handle, HierarchyError,
-    MaxTicksPerFrame, MaxTicksPerFrameError, ObjectHandle, Orthographic, Parent, Perspective,
-    Projection, ProjectionError, Scene, TickContext, TickRate, TickRateError,
+    ActiveCamera, ActiveCameraError, AdvanceSummary, Color, ColorError, Core, CoreSettings,
+    DrawContext, FrameContext, GameObject, GameState, GameStateTickContext, GameTime, Handle,
+    HierarchyError, MaxTicksPerFrame, MaxTicksPerFrameError, ObjectHandle, Orthographic, Parent,
+    Perspective, Projection, ProjectionError, Scene, TickContext, TickRate, TickRateError,
     TransformInterpolation, TypedHandleError,
 };
 pub use sfeg_core::{math, platform};

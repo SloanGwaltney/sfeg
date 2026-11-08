@@ -28,7 +28,7 @@ pub use camera::{
     ActiveCamera, ActiveCameraError, Orthographic, Perspective, Projection, ProjectionError,
 };
 pub use color::{Color, ColorError};
-pub use core_loop::{AdvanceSummary, Core};
+pub use core_loop::{AdvanceSummary, Core, CoreSettings};
 pub use draw::DrawContext;
 pub use frame::FrameContext;
 pub use game_object::GameObject;

@@ -1,0 +1,5 @@
+error[E0063]: missing field `transform_interpolation` in initializer of `CoreSettings`
+ --> tests/compile_fail/missing_setting.rs:5:13
+  |
+5 |     let _ = CoreSettings {
+  |             ^^^^^^^^^^^^ missing `transform_interpolation`
