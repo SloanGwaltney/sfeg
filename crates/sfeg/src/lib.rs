@@ -15,3 +15,11 @@ pub use sfeg_core::{
 };
 pub use sfeg_core::{math, platform};
 pub use sfeg_winit::{RunError, WindowSettings, run};
+
+/// Input actions (ADR 0016). See [`sfeg_core::input`].
+pub mod input {
+    pub use sfeg_core::input::*;
+    /// Declares an input action: `#[derive(Action)]` with
+    /// `#[action(name = "jump", kind = Button)]`.
+    pub use sfeg_macros::Action;
+}

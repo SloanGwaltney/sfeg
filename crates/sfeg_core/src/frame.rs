@@ -1,3 +1,4 @@
+use crate::input::InputView;
 use crate::time::GameTime;
 
 /// What a `frame` callback can see (ADR 0008).
@@ -12,6 +13,7 @@ pub struct FrameContext<'a> {
     game_time: &'a GameTime,
     real_dt: f32,
     interpolation_factor: f32,
+    frame_input: &'a InputView,
 }
 
 impl<'a> FrameContext<'a> {
@@ -19,12 +21,22 @@ impl<'a> FrameContext<'a> {
         game_time: &'a GameTime,
         real_dt: f32,
         interpolation_factor: f32,
+        frame_input: &'a InputView,
     ) -> FrameContext<'a> {
         FrameContext {
             game_time,
             real_dt,
             interpolation_factor,
+            frame_input,
         }
+    }
+
+    /// The frame view of the input actions: "just pressed" means since the
+    /// last frame (ADR 0008). Use it for presentation that should react
+    /// with the least delay, such as UI. Gameplay reads
+    /// [`TickContext::tick_input`](crate::TickContext::tick_input).
+    pub fn frame_input(&self) -> &InputView {
+        self.frame_input
     }
 
     /// Game time after this frame's ticks ran.

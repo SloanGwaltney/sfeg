@@ -1,15 +1,26 @@
 //! A demo game built on SFEG.
 //!
-//! An orange cube walks back and forth across a floor, spinning as it goes,
-//! with a smaller white cube riding on top as its hat. A fixed camera looks
-//! on from above and in front. The game state says hello once per second
-//! of game time.
+//! The player steers an orange cube around a floor with WASD or the arrow
+//! keys, and jumps with Space. A smaller white cube rides on top as its
+//! hat. A fixed camera looks on from above and in front. The game state
+//! says hello once per second of game time.
 
+use sfeg::input::{Action, ActionRegistry, InputBindings};
 use sfeg::math::{Rotation, Transform, Vector3};
 use sfeg::{
     Color, Core, DrawContext, GameObject, GameState, GameStateTickContext, Handle,
     MaxTicksPerFrame, Parent, Perspective, Scene, TickContext, TickRate, WindowSettings,
 };
+
+/// Jumps.
+#[derive(Action)]
+#[action(name = "jump", kind = Button)]
+struct Jump;
+
+/// Moves across the floor. Up is away from the camera.
+#[derive(Action)]
+#[action(name = "move", kind = Axis2d)]
+struct Move;
 
 /// The game-wide state.
 struct HelloGame;
@@ -23,15 +34,22 @@ impl GameState for HelloGame {
     }
 }
 
-/// Walks along x at a fixed speed, turning back at the edges of the floor,
-/// and spins around its up axis.
+/// How far from the center the walker can go along x and z: the floor's
+/// half-size, less half the walker.
+const FLOOR_HALF_X: f32 = 4.5;
+const FLOOR_HALF_Z: f32 = 2.5;
+
+/// The player's cube: walks where [`Move`] points, jumps on [`Jump`], and
+/// spins around its up axis.
 struct Walker {
     /// Units per second.
     speed: f32,
-    /// How far from the center it walks before turning back.
-    turn_back_at: f32,
-    /// +1 walking toward +x, -1 toward -x.
-    direction: f32,
+    /// Upward speed when a jump starts, in units per second.
+    jump_speed: f32,
+    /// Downward acceleration, in units per second squared.
+    gravity: f32,
+    /// Current upward speed, in units per second.
+    vertical_speed: f32,
     /// Radians per second.
     spin_speed: f32,
 }
@@ -39,12 +57,25 @@ struct Walker {
 impl GameObject for Walker {
     fn tick(&mut self, ctx: &mut TickContext) {
         let dt = ctx.game_time().dt();
-        let mut position =
-            ctx.local().position() + Vector3::UNIT_X * self.speed * self.direction * dt;
-        if position.x().abs() >= self.turn_back_at {
-            position = position.with_x(self.turn_back_at.copysign(position.x()));
-            self.direction = -self.direction;
+        let input = ctx.tick_input();
+        let direction = input.axis_2d::<Move>();
+        let on_ground = ctx.local().position().y() <= 0.0;
+        if on_ground && input.just_pressed::<Jump>() {
+            self.vertical_speed = self.jump_speed;
         }
+
+        // Up on the axis is -z, away from the camera.
+        let step = Vector3::new(direction.x(), 0.0, -direction.y()) * self.speed * dt;
+        self.vertical_speed -= self.gravity * dt;
+        let mut position =
+            ctx.local().position() + step + Vector3::UNIT_Y * self.vertical_speed * dt;
+        if position.y() <= 0.0 {
+            position = position.with_y(0.0);
+            self.vertical_speed = 0.0;
+        }
+        let position = position
+            .with_x(position.x().clamp(-FLOOR_HALF_X, FLOOR_HALF_X))
+            .with_z(position.z().clamp(-FLOOR_HALF_Z, FLOOR_HALF_Z));
         let spin = Rotation::from_rotation_y(self.spin_speed * dt).expect("finite spin");
         let rotation = ctx.local().rotation().then(spin);
 
@@ -87,6 +118,16 @@ struct FixedCamera;
 
 impl GameObject for FixedCamera {}
 
+/// The demo's actions bound by its default bindings file.
+fn input_bindings() -> InputBindings {
+    let mut actions = ActionRegistry::new();
+    actions.register::<Jump>().expect("jump is registered once");
+    actions.register::<Move>().expect("move is registered once");
+    // Checked by the tests, so it can't fail in a released build.
+    InputBindings::from_toml(include_str!("bindings.toml"), &actions)
+        .expect("the default bindings match the actions")
+}
+
 /// Builds the game and its first scene.
 fn setup() -> (Core<HelloGame>, Handle<Walker>, Handle<Hat>) {
     let mut scene = Scene::new();
@@ -94,7 +135,7 @@ fn setup() -> (Core<HelloGame>, Handle<Walker>, Handle<Hat>) {
     let floor = Transform::new(
         Vector3::new(0.0, -0.55, 0.0),
         Rotation::IDENTITY,
-        Vector3::new(10.0, 0.1, 4.0),
+        Vector3::new(10.0, 0.1, 6.0),
     )
     .expect("finite");
     scene
@@ -105,8 +146,9 @@ fn setup() -> (Core<HelloGame>, Handle<Walker>, Handle<Hat>) {
         .spawn_immediate(
             Walker {
                 speed: 3.0,
-                turn_back_at: 4.0,
-                direction: 1.0,
+                jump_speed: 6.0,
+                gravity: 20.0,
+                vertical_speed: 0.0,
                 spin_speed: 1.5,
             },
             Parent::Root,
@@ -143,6 +185,7 @@ fn setup() -> (Core<HelloGame>, Handle<Walker>, Handle<Hat>) {
         scene,
         TickRate::DEFAULT,
         MaxTicksPerFrame::DEFAULT,
+        input_bindings(),
     );
     (core, walker, hat)
 }
@@ -161,14 +204,27 @@ fn main() -> Result<(), sfeg::RunError> {
 
 #[cfg(test)]
 mod tests {
+    use sfeg::input::KeyCode;
+    use sfeg::platform::InputEvent;
+
     use super::*;
+
+    fn ticks(core: &mut Core<HelloGame>, count: u32) {
+        for _ in 0..count {
+            core.tick();
+        }
+    }
+
+    #[test]
+    fn the_default_bindings_load() {
+        input_bindings();
+    }
 
     #[test]
     fn walker_covers_its_speed_in_one_second() {
         let (mut core, walker, hat) = setup();
-        for _ in 0..60 {
-            core.tick();
-        }
+        core.apply_input_event(InputEvent::KeyPressed(KeyCode::KeyD));
+        ticks(&mut core, 60);
         let scene = core.current_scene();
         let x = scene.local_of(walker).unwrap().position().x();
         assert!((x - 3.0).abs() < 1e-4, "{x}");
@@ -180,21 +236,35 @@ mod tests {
     }
 
     #[test]
-    fn walker_turns_back_at_the_edge() {
+    fn up_walks_away_from_the_camera_and_stops_at_the_edge() {
         let (mut core, walker, _) = setup();
-        // At 3 units per second it reaches the edge at 4 after 1⅓ seconds,
-        // so two seconds in it has walked back to about 2. Rounding decides
-        // which tick lands on the edge, so it can be one step (0.05) off.
-        for _ in 0..120 {
-            core.tick();
-        }
-        let x = core
+        core.apply_input_event(InputEvent::KeyPressed(KeyCode::ArrowUp));
+        ticks(&mut core, 600);
+        let z = core
             .current_scene()
             .local_of(walker)
             .unwrap()
             .position()
-            .x();
-        assert!((x - 2.0).abs() < 0.06, "{x}");
+            .z();
+        assert_eq!(z, -FLOOR_HALF_Z);
+    }
+
+    #[test]
+    fn jumping_goes_up_and_lands() {
+        let (mut core, walker, _) = setup();
+        core.apply_input_event(InputEvent::KeyPressed(KeyCode::Space));
+        ticks(&mut core, 10);
+        let height = |core: &Core<HelloGame>| {
+            core.current_scene()
+                .local_of(walker)
+                .unwrap()
+                .position()
+                .y()
+        };
+        assert!(height(&core) > 0.5, "{}", height(&core));
+        // Holding Space doesn't jump again: it lands and stays down.
+        ticks(&mut core, 120);
+        assert_eq!(height(&core), 0.0);
     }
 
     #[test]

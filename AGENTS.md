@@ -45,3 +45,13 @@ When creating skill files:
 - Unless the user says otherwise, use exactly two sections:
   1. **Description**: a brief summary of what the skill does.
   2. **Steps**: the steps the skill takes.
+
+## Naming
+
+A name should say what something does, when it takes effect, and which one it means, without the reader needing the surrounding context.
+
+- **Say when it takes effect.** If something can happen now or later, the name says which, such as `spawn_immediate` and `spawn_deferred`.
+- **Say which one.** Qualify names that could mean more than one thing, such as `current_scene` (a game has several scenes) and `SceneCommands` (not just `Commands`, since GPU command buffers exist too).
+- **Use plain verbs that state what happens to the data**, such as `set_previous_locals_to_current`, not vague ones like `remember`, `record`, or `sync`.
+- **Document requirements the API imposes**, even when the types already enforce them, such as a core needing a first scene.
+- **Give each error variant a one-line doc that describes when it happens**, such as "The object is gone, or hasn't spawned yet."

@@ -247,7 +247,7 @@ mod tests {
     fn run_ticks(scene: &mut Scene, count: u64) {
         let mut game_time = GameTime::new(TickRate::DEFAULT);
         for _ in 0..count {
-            scene.tick(&game_time);
+            scene.tick(&game_time, &crate::input::InputView::empty());
             game_time.advance_one_tick();
         }
     }

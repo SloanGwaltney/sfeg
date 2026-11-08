@@ -11,7 +11,24 @@ use bytemuck::NoUninit;
 
 use crate::camera::Projection;
 use crate::color::Color;
+use crate::input::KeyCode;
 use crate::math::{Matrix4, Rotation, Vector3};
+
+/// Something the player did, as the runner reports it to
+/// [`Core::apply_input_event`](crate::Core::apply_input_event)
+/// (ADR 0016).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum InputEvent {
+    /// A key went down. Only real presses, not the operating system's key
+    /// repeat while held.
+    KeyPressed(KeyCode),
+    /// A key came up.
+    KeyReleased(KeyCode),
+    /// The window lost focus, so it won't hear about keys released until it
+    /// gets focus back.
+    FocusLost,
+}
 
 /// Everything one frame draws: where the camera is, and what is in front
 /// of it.
