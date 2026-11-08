@@ -55,6 +55,13 @@ pub trait ActionKind: sealed::Sealed + 'static {
     const TABLE_NAME: &'static str;
 }
 
+// Seals `ActionKind` so only SFEG can add kinds. The engine handles each
+// kind by hand: bindings only parse the tables for known kinds, and
+// `InputView` only has queries for them. A kind from outside SFEG would
+// compile and register, but could never be bound or read, so its action
+// would silently do nothing. `Sealed` is public inside a private module,
+// so other crates can use `ActionKind` in bounds but can't implement it.
+// This also lets SFEG add items to `ActionKind` without breaking games.
 mod sealed {
     pub trait Sealed {}
 }
