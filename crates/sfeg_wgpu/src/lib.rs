@@ -4,10 +4,15 @@
 //! (ADR 0007). It must never depend on winit, so the runner hands it a
 //! window through the `raw-window-handle` traits.
 //!
-//! Each frame clears the window to [`PLACEHOLDER_CLEAR_COLOR`], then draws
+//! It can also render offscreen, with no window, into an image that is
+//! read back to the CPU ([`OffscreenRenderer`]). Headless runs and tests use
+//! it to see what a frame shows.
+//!
+//! Each frame clears the target to [`PLACEHOLDER_CLEAR_COLOR`], then draws
 //! the core's [`DrawList`] from its camera.
 
 mod flat_mesh;
+mod offscreen;
 
 use std::error::Error;
 use std::fmt;
@@ -18,6 +23,11 @@ use sfeg_core::platform::DrawList;
 use wgpu::rwh::{HasDisplayHandle, HasWindowHandle};
 
 use crate::flat_mesh::{DEPTH_FORMAT, FlatMeshPipeline};
+
+pub use crate::offscreen::{
+    CapturedImage, CapturedImageError, OffscreenRenderer, OffscreenRendererError,
+    RenderToImageError,
+};
 
 /// The color every frame is cleared to, until the game can choose its own.
 /// A dark blue-gray, in linear color.
@@ -90,11 +100,9 @@ impl Renderer {
             ..Default::default()
         }))
         .map_err(|source| RendererError::NoAdapter(Box::new(source)))?;
-        let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
-            label: Some("sfeg device"),
-            ..Default::default()
-        }))
-        .map_err(|source| RendererError::RequestDevice(Box::new(source)))?;
+        log_adapter(&adapter);
+        let (device, queue) = request_device(&adapter)
+            .map_err(|source| RendererError::RequestDevice(Box::new(source)))?;
 
         let capabilities = surface.get_capabilities(&adapter);
         // Prefer an sRGB format, so colors are blended in linear space and
@@ -207,31 +215,7 @@ impl Renderer {
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("sfeg frame"),
             });
-        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-            label: Some("sfeg world"),
-            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                view: &view,
-                depth_slice: None,
-                resolve_target: None,
-                ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(PLACEHOLDER_CLEAR_COLOR),
-                    store: wgpu::StoreOp::Store,
-                },
-            })],
-            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                view: depth_view,
-                depth_ops: Some(wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(1.0),
-                    // Nothing reads depth after this pass.
-                    store: wgpu::StoreOp::Discard,
-                }),
-                stencil_ops: None,
-            }),
-            ..Default::default()
-        });
-        self.flat_meshes.draw(&mut pass);
-        // The pass must end before submitting.
-        drop(pass);
+        encode_world_pass(&mut encoder, &self.flat_meshes, &view, depth_view);
         self.queue.submit([encoder.finish()]);
         self.queue.present(frame);
     }
@@ -246,21 +230,11 @@ impl Renderer {
             return;
         }
         self.surface.configure(&self.device, &self.config);
-        let depth = self.device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("sfeg depth"),
-            size: wgpu::Extent3d {
-                width: self.config.width,
-                height: self.config.height,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: DEPTH_FORMAT,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-            view_formats: &[],
-        });
-        self.depth_view = Some(depth.create_view(&wgpu::TextureViewDescriptor::default()));
+        self.depth_view = Some(create_depth_view(
+            &self.device,
+            self.config.width,
+            self.config.height,
+        ));
     }
 
     fn recreate_surface(&mut self) {
@@ -282,6 +256,84 @@ impl Renderer {
             }
         }
     }
+}
+
+/// Logs which GPU the renderer picked, so a frame can be traced back to
+/// the driver that drew it. CPU adapters, such as Mesa's lavapipe, are
+/// only picked when nothing else can draw.
+fn log_adapter(adapter: &wgpu::Adapter) {
+    let info = adapter.get_info();
+    tracing::info!(
+        name = %info.name,
+        device_type = ?info.device_type,
+        backend = ?info.backend,
+        driver = %info.driver,
+        driver_info = %info.driver_info,
+        "picked a GPU adapter"
+    );
+}
+
+/// Opens `adapter`, blocking until it is ready.
+fn request_device(
+    adapter: &wgpu::Adapter,
+) -> Result<(wgpu::Device, wgpu::Queue), wgpu::RequestDeviceError> {
+    pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+        label: Some("sfeg device"),
+        ..Default::default()
+    }))
+}
+
+/// A depth buffer `width_px` by `height_px` pixels, for one render target.
+fn create_depth_view(device: &wgpu::Device, width_px: u32, height_px: u32) -> wgpu::TextureView {
+    let depth = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("sfeg depth"),
+        size: wgpu::Extent3d {
+            width: width_px,
+            height: height_px,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: DEPTH_FORMAT,
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+        view_formats: &[],
+    });
+    depth.create_view(&wgpu::TextureViewDescriptor::default())
+}
+
+/// Records the pass that clears `color_view` and draws the prepared world
+/// into it. The window and offscreen targets both draw through this, so
+/// a capture shows exactly what the window would.
+fn encode_world_pass(
+    encoder: &mut wgpu::CommandEncoder,
+    flat_meshes: &FlatMeshPipeline,
+    color_view: &wgpu::TextureView,
+    depth_view: &wgpu::TextureView,
+) {
+    let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+        label: Some("sfeg world"),
+        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+            view: color_view,
+            depth_slice: None,
+            resolve_target: None,
+            ops: wgpu::Operations {
+                load: wgpu::LoadOp::Clear(PLACEHOLDER_CLEAR_COLOR),
+                store: wgpu::StoreOp::Store,
+            },
+        })],
+        depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+            view: depth_view,
+            depth_ops: Some(wgpu::Operations {
+                load: wgpu::LoadOp::Clear(1.0),
+                // Nothing reads depth after this pass.
+                store: wgpu::StoreOp::Discard,
+            }),
+            stencil_ops: None,
+        }),
+        ..Default::default()
+    });
+    flat_meshes.draw(&mut pass);
 }
 
 /// Why a [`Renderer`] could not be created.

@@ -10,6 +10,14 @@ In SFEG, "easy" means explicit: the engine is easy to use because it is hard to 
 cargo run -p demo
 ```
 
+To run it with no window and save one frame as a PNG instead:
+
+```sh
+cargo run -p demo -- --capture-after-ticks 60 --capture-path frame.png
+```
+
+This needs a GPU driver but no display. On a machine with no GPU, such as a container or CI, Mesa's CPU Vulkan driver (lavapipe) works. On Debian or Ubuntu, install `mesa-vulkan-drivers` and `libvulkan1`. The test that captures a frame needs this too.
+
 ## License
 
 Licensed under either of

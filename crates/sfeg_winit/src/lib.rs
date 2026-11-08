@@ -46,8 +46,7 @@ pub struct WindowSettings {
 /// is hidden, some platforms stop asking for frames, so the game pauses
 /// until it is shown again.
 ///
-/// It also installs a default `tracing` subscriber that logs to stderr
-/// (ADR 0009). If the game already installed its own, that one is kept.
+/// It also calls [`install_default_tracing_subscriber`] (ADR 0009).
 ///
 /// On macOS this must be called on the main thread.
 ///
@@ -58,9 +57,7 @@ pub struct WindowSettings {
 /// - [`RunError::CreateWindow`] if the window couldn't open.
 /// - [`RunError::Renderer`] if the renderer couldn't start for the window.
 pub fn run<G: GameState>(core: Core<G>, window_settings: WindowSettings) -> Result<(), RunError> {
-    // Fails only if a subscriber is already installed, which means the
-    // game chose its own.
-    let _ = tracing_subscriber::fmt().try_init();
+    install_default_tracing_subscriber();
 
     let event_loop = EventLoop::new().map_err(|source| RunError::EventLoop(Box::new(source)))?;
     let mut runner = Runner {
@@ -77,6 +74,15 @@ pub fn run<G: GameState>(core: Core<G>, window_settings: WindowSettings) -> Resu
         Some(error) => Err(error),
         None => Ok(()),
     }
+}
+
+/// Installs SFEG's default `tracing` subscriber, which logs to stderr
+/// (ADR 0009). [`run`] calls it, and headless runs can call it to see the
+/// same logs. If a subscriber is already installed, such as one the game
+/// chose, that one is kept and this does nothing.
+pub fn install_default_tracing_subscriber() {
+    // Fails only if a subscriber is already installed.
+    let _ = tracing_subscriber::fmt().try_init();
 }
 
 struct Runner<G: GameState> {
