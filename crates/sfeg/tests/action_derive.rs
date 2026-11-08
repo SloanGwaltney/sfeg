@@ -70,5 +70,5 @@ fn derived_actions_drive_a_game() {
 
 #[test]
 fn compile_errors_explain_the_mistake() {
-    trybuild::TestCases::new().compile_fail("tests/ui/*.rs");
+    trybuild::TestCases::new().compile_fail("tests/compile_fail/*.rs");
 }

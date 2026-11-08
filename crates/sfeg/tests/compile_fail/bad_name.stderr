@@ -1,5 +1,5 @@
 error: an action name is lowercase letters, digits, and underscores, starting with a letter
- --> tests/ui/bad_name.rs:4:17
+ --> tests/compile_fail/bad_name.rs:4:17
   |
 4 | #[action(name = "Jump", kind = Button)]
   |                 ^^^^^^

@@ -1,5 +1,5 @@
 error: an action needs an explicit `name = "..."` for binding files
- --> tests/ui/missing_name.rs:4:1
+ --> tests/compile_fail/missing_name.rs:4:1
   |
 4 | #[action(kind = Button)]
   | ^^^^^^^^^^^^^^^^^^^^^^^^

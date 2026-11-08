@@ -1,11 +1,11 @@
 error[E0271]: type mismatch resolving `<Move as Action>::Kind == Button`
-  --> tests/ui/wrong_kind_query.rs:13:49
+  --> tests/compile_fail/wrong_kind_query.rs:13:49
    |
 13 |         let _ = ctx.tick_input().just_pressed::<Move>();
    |                                                 ^^^^ type mismatch resolving `<Move as Action>::Kind == Button`
    |
 note: expected this to be `Button`
-  --> tests/ui/wrong_kind_query.rs:4:10
+  --> tests/compile_fail/wrong_kind_query.rs:4:10
    |
  4 | #[derive(Action)]
    |          ^^^^^^
