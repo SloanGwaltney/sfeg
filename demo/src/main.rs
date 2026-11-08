@@ -131,7 +131,7 @@ fn input_bindings() -> InputBindings {
 
 /// Builds the game and its first scene.
 fn setup() -> (Core<HelloGame>, Handle<Walker>, Handle<Hat>) {
-    let mut scene = Scene::new();
+    let mut scene = Scene::new(());
 
     let floor = Transform::new(
         Vector3::new(0.0, -0.55, 0.0),

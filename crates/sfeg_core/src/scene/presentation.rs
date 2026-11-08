@@ -247,7 +247,7 @@ mod tests {
     fn run_ticks(scene: &mut Scene, count: u64) {
         let mut game_time = GameTime::new(TickRate::DEFAULT);
         for _ in 0..count {
-            scene.tick(&game_time, &crate::input::InputView::empty());
+            scene.tick(&game_time, &crate::input::InputView::empty(), &mut ());
             game_time.advance_one_tick();
         }
     }
@@ -258,7 +258,7 @@ mod tests {
 
     /// A scene with a camera, so it draws.
     fn scene_with_camera() -> (Scene, ObjectHandle) {
-        let mut scene = Scene::new();
+        let mut scene = Scene::new(());
         let camera = scene
             .spawn_immediate(Probe(|_| {}), Parent::Root, Transform::IDENTITY)
             .unwrap()
@@ -397,7 +397,7 @@ mod tests {
 
     #[test]
     fn the_camera_view_is_blended_too() {
-        let mut scene = Scene::new();
+        let mut scene = Scene::new(());
         let camera = scene.spawn_immediate(Mover, Parent::Root, at(0.0)).unwrap();
         scene.set_active_camera(camera, projection()).unwrap();
         run_ticks(&mut scene, 1);
@@ -410,7 +410,7 @@ mod tests {
 
     #[test]
     fn the_camera_ignores_scale() {
-        let mut scene = Scene::new();
+        let mut scene = Scene::new(());
         let squashed = Transform::new(
             Vector3::new(0.0, 0.0, 10.0),
             Rotation::IDENTITY,
@@ -433,7 +433,7 @@ mod tests {
 
     #[test]
     fn no_camera_draws_nothing_and_reports_once_per_loss() {
-        let mut scene = Scene::new();
+        let mut scene = Scene::new(());
         scene.spawn_immediate(Still, Parent::Root, at(0.0)).unwrap();
         let draw_list = scene.draw(Blend::Current, 0.0);
         assert!(draw_list.camera().is_none());
@@ -463,7 +463,7 @@ mod tests {
 
     #[test]
     fn a_gone_object_cant_be_the_camera() {
-        let mut scene = Scene::new();
+        let mut scene = Scene::new(());
         scene
             .spawn_immediate(
                 Probe(|ctx| {

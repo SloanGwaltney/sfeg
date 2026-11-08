@@ -63,7 +63,7 @@ impl<G: GameState> Core<G> {
 
     /// Runs one rendered frame's worth of game (ADR 0008): adds `real_dt`
     /// of real time, runs the ticks that fit, then runs `frame` on the game
-    /// state and every object.
+    /// state, the scene state, and every object.
     ///
     /// Real time left over that doesn't fill a tick carries into the next
     /// call, and sets the frame's
@@ -113,8 +113,9 @@ impl<G: GameState> Core<G> {
         }
     }
 
-    /// Runs exactly one tick (ADR 0008): the game state, then every
-    /// object, then the spawns and despawns they asked for (ADR 0012).
+    /// Runs exactly one tick (ADR 0008): the game state, then the scene
+    /// state, then every object, then the spawns and despawns they asked
+    /// for (ADR 0012).
     ///
     /// Input that arrived since the last tick is seen by this one, in
     /// [`TickContext::tick_input`](crate::TickContext::tick_input).
@@ -123,7 +124,8 @@ impl<G: GameState> Core<G> {
         let tick_input = self.input.tick_view();
         let mut ctx = GameStateTickContext::new(&self.game_time, tick_input);
         self.game_state.tick(&mut ctx);
-        self.current_scene.tick(&self.game_time, tick_input);
+        self.current_scene
+            .tick(&self.game_time, tick_input, &mut self.game_state);
         self.game_time.advance_one_tick();
         // No real time has passed since this tick.
         self.interpolation_factor = 0.0;
@@ -269,7 +271,7 @@ mod tests {
     }
 
     fn new_core<G: GameState>(game_state: G) -> Core<G> {
-        Core::new(game_state, Scene::new(), settings(InputBindings::none()))
+        Core::new(game_state, Scene::new(()), settings(InputBindings::none()))
     }
 
     #[derive(Default)]
@@ -491,7 +493,7 @@ mod tests {
         actions.register::<Jump>().unwrap();
         let bindings =
             InputBindings::from_toml("[button.jump]\nkeys = [\"Space\"]", &actions).unwrap();
-        let mut core = Core::new(RecordJumps::default(), Scene::new(), settings(bindings));
+        let mut core = Core::new(RecordJumps::default(), Scene::new(()), settings(bindings));
         core.apply_input_event(InputEvent::KeyPressed(crate::input::KeyCode::Space));
         // No tick fits in this frame, so the tick sees the press next frame.
         core.advance(Duration::from_millis(10));
