@@ -32,11 +32,24 @@ use serde::de::{MapAccess, Visitor};
 /// The file the constants are written to, inside Cargo's `OUT_DIR`.
 pub const GENERATED_FILE_NAME: &str = "sfeg_assets.rs";
 
-/// Where the game's manifest and assets are, passed to
-/// [`generate_asset_constants`].
+/// Where the game's manifest and assets are, and how strictly to check
+/// them, passed to [`generate_asset_constants`].
 ///
 /// Relative paths are relative to the game's crate, where Cargo runs build
 /// scripts.
+///
+/// Every field must be set. There is deliberately no `Default`, so each
+/// choice is written in the game's `build.rs`, and a setting added in a
+/// later SFEG version is a compile error until the game sets it.
+///
+/// ```
+/// # use sfeg_build::{AssetManifestSettings, SharedFileCheck};
+/// let settings = AssetManifestSettings {
+///     manifest_path: "assets/assets.ron".into(),
+///     asset_folder: "assets".into(),
+///     files_shared_by_names: SharedFileCheck::Warn,
+/// };
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AssetManifestSettings {
     /// The manifest file, such as `assets/assets.ron`.
@@ -44,6 +57,26 @@ pub struct AssetManifestSettings {
     /// The folder the manifest's paths are relative to, such as `assets`.
     /// The game passes the same folder to `CoreSettings::asset_folder`.
     pub asset_folder: PathBuf,
+    /// What to do when two or more names point at the same file. Each name
+    /// is a separate asset, so the file is loaded once per name.
+    /// [`SharedFileCheck::Warn`] suits most games.
+    pub files_shared_by_names: SharedFileCheck,
+}
+
+/// What the build does when two or more manifest names point at the same
+/// file.
+///
+/// Sharing never fails the build: each name is a valid asset. It is
+/// usually a copy-paste mistake, though, and the file is loaded and kept
+/// in memory once per name.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SharedFileCheck {
+    /// Print a Cargo warning for each shared file, naming every name that
+    /// uses it. The build still succeeds.
+    Warn,
+    /// Allow it silently, for projects that give one file several names on
+    /// purpose.
+    Allow,
 }
 
 /// Checks the game's asset manifest and writes a constant for each asset
@@ -81,6 +114,11 @@ pub fn generate_asset_constants(settings: &AssetManifestSettings) -> Result<(), 
         }
     })?;
     let assets = check_manifest(&text, &settings.manifest_path, &settings.asset_folder)?;
+    if settings.files_shared_by_names == SharedFileCheck::Warn {
+        for shared in find_shared_files(&assets, &settings.asset_folder) {
+            println!("cargo::warning={shared}");
+        }
+    }
     let code = generate_code(&settings.manifest_path, &assets);
 
     let out_dir = std::env::var_os("OUT_DIR").ok_or(AssetBuildError::OutDirNotSet)?;
@@ -203,7 +241,65 @@ fn stays_inside_folder(path: &str) -> bool {
             .all(|component| matches!(component, Component::Normal(_) | Component::CurDir))
 }
 
+/// One file that two or more manifest names point at.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct SharedFile {
+    /// Every name pointing at it, in name order.
+    names: Vec<String>,
+    /// Each name's path as written, in the same order. They can differ,
+    /// such as `a.png` and `./a.png`.
+    paths: Vec<String>,
+}
+
+impl fmt::Display for SharedFile {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "one file is loaded under {} names:", self.names.len())?;
+        for (name, path) in self.names.iter().zip(&self.paths) {
+            write!(f, " {name:?} ({path:?})")?;
+        }
+        write!(
+            f,
+            ". Each name loads its own copy. If this is on purpose, set \
+             files_shared_by_names to SharedFileCheck::Allow."
+        )
+    }
+}
+
+/// The files that more than one asset points at, comparing where the paths
+/// lead on disk, so `a.png` and `./a.png` are the same file. Assets come
+/// sorted by name, so the result is in a stable order.
+fn find_shared_files(assets: &[ManifestAsset], asset_folder: &Path) -> Vec<SharedFile> {
+    let mut by_file: Vec<(PathBuf, SharedFile)> = Vec::new();
+    for asset in assets {
+        // Every path was checked to exist, so this only fails if the file
+        // vanished since. Such a file can't be shared with anything.
+        let Ok(file) = asset_folder.join(&asset.path).canonicalize() else {
+            continue;
+        };
+        match by_file.iter_mut().find(|(known, _)| *known == file) {
+            Some((_, shared)) => {
+                shared.names.push(asset.name.clone());
+                shared.paths.push(asset.path.clone());
+            }
+            None => by_file.push((
+                file,
+                SharedFile {
+                    names: vec![asset.name.clone()],
+                    paths: vec![asset.path.clone()],
+                },
+            )),
+        }
+    }
+    by_file
+        .into_iter()
+        .map(|(_, shared)| shared)
+        .filter(|shared| shared.names.len() > 1)
+        .collect()
+}
+
 fn generate_code(manifest_path: &Path, assets: &[ManifestAsset]) -> String {
+    // Each constant allows being unused: an asset may be used only from
+    // data files, such as scenes, never from code.
     let mut code = format!(
         "// @generated by sfeg_build from {}. Do not edit.\n",
         manifest_path.display()
@@ -216,6 +312,7 @@ fn generate_code(manifest_path: &Path, assets: &[ManifestAsset]) -> String {
         // `{:?}` writes a valid Rust string literal, escapes included.
         code.push_str(&format!(
             "\n/// The {kind_doc} `{name}`, from `{path}`.\n\
+             #[allow(dead_code)]\n\
              pub const {constant}: ::sfeg::assets::{kind_type} =\n    \
              ::sfeg::assets::{kind_type}::from_manifest({name:?}, {path:?});\n",
             name = asset.name,
@@ -481,6 +578,52 @@ mod tests {
     }
 
     #[test]
+    fn names_sharing_a_file_are_found_however_the_path_is_written() {
+        let folder = asset_folder("shared", &["textures/tree.png", "rock.png"]);
+        let assets = check(
+            r#"{
+                "tree": Texture("textures/tree.png"),
+                "rock": Texture("rock.png"),
+                "tree_again": Texture("./textures/tree.png"),
+            }"#,
+            &folder,
+        )
+        .unwrap();
+        assert_eq!(
+            find_shared_files(&assets, &folder),
+            [SharedFile {
+                names: vec!["tree".into(), "tree_again".into()],
+                paths: vec!["textures/tree.png".into(), "./textures/tree.png".into()],
+            }]
+        );
+    }
+
+    #[test]
+    fn files_with_one_name_each_are_not_shared() {
+        let folder = asset_folder("not_shared", &["a.png", "b.png"]);
+        let assets = check(
+            r#"{ "a": Texture("a.png"), "b": Texture("b.png") }"#,
+            &folder,
+        )
+        .unwrap();
+        assert!(find_shared_files(&assets, &folder).is_empty());
+    }
+
+    #[test]
+    fn the_shared_file_warning_says_how_to_allow_it() {
+        let shared = SharedFile {
+            names: vec!["tree".into(), "tree_again".into()],
+            paths: vec!["tree.png".into(), "./tree.png".into()],
+        };
+        assert_eq!(
+            shared.to_string(),
+            "one file is loaded under 2 names: \"tree\" (\"tree.png\") \
+             \"tree_again\" (\"./tree.png\"). Each name loads its own copy. If this is \
+             on purpose, set files_shared_by_names to SharedFileCheck::Allow."
+        );
+    }
+
+    #[test]
     fn names_are_lowercase_snake_case() {
         assert!(is_valid_name("player_idle_2"));
         for name in ["", "2d", "_x", "Player", "a-b", "a b", "é"] {
@@ -499,7 +642,11 @@ mod tests {
             }],
         );
         assert!(code.starts_with("// @generated by sfeg_build from assets/assets.ron."));
-        assert!(code.contains("pub const PLAYER_IDLE: ::sfeg::assets::TextureAsset ="));
+        // Assets may be used only from data files, so an unused constant
+        // isn't a mistake.
+        assert!(code.contains(
+            "#[allow(dead_code)]\npub const PLAYER_IDLE: ::sfeg::assets::TextureAsset ="
+        ));
         assert!(code.contains(
             r#"::sfeg::assets::TextureAsset::from_manifest("player_idle", "textures/player \"idle\".png");"#
         ));
