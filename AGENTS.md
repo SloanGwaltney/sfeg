@@ -55,3 +55,7 @@ A name should say what something does, when it takes effect, and which one it me
 - **Use plain verbs that state what happens to the data**, such as `set_previous_locals_to_current`, not vague ones like `remember`, `record`, or `sync`.
 - **Document requirements the API imposes**, even when the types already enforce them, such as a core needing a first scene.
 - **Give each error variant a one-line doc that describes when it happens**, such as "The object is gone, or hasn't spawned yet."
+
+## Comments and PRs
+
+Write comments, docs, commit messages, and PR descriptions for any reader, not for the machine the work was done on. Leave out details unique to the agent's environment, such as its GPU driver, missing display, or file paths, unless the reader needs them to use or check the change.
