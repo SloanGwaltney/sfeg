@@ -348,6 +348,7 @@ name = "demo"
 version = "0.1.0"
 dependencies = [
  "sfeg",
+ "sfeg_build",
 ]
 
 [[package]]
@@ -1669,11 +1670,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "sfeg_build"
+version = "0.1.0"
+dependencies = [
+ "ron",
+ "serde",
+]
+
+[[package]]
 name = "sfeg_core"
 version = "0.1.0"
 dependencies = [
  "bytemuck",
  "glam",
+ "png",
  "ron",
  "serde",
  "toml",

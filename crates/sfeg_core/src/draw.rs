@@ -1,3 +1,4 @@
+use crate::assets::TextureHandle;
 use crate::color::Color;
 use crate::math::Matrix4;
 use crate::platform::{BuiltinMesh, DrawCommand};
@@ -37,6 +38,27 @@ impl<'a> DrawContext<'a> {
             mesh: BuiltinMesh::Cube,
             world_matrix: self.world_matrix,
             color,
+        });
+    }
+
+    /// Draws `texture` on a flat square one unit on each side, centered on
+    /// this object in its local XY plane and facing +Z, placed by its
+    /// world transform.
+    ///
+    /// The object's scale sizes the square. A texture that isn't square is
+    /// stretched to fit, so scale the object to match its aspect ratio.
+    ///
+    /// Until the texture is [ready](crate::assets::TextureState::Ready),
+    /// such as while it loads or after it failed, a placeholder is drawn
+    /// instead, so a missing texture is visible.
+    ///
+    /// For now, pixels are sampled nearest, for crisp pixel art, and
+    /// pixels less than half opaque are cut out. Both will become choices
+    /// with materials (ADR 0018).
+    pub fn draw_sprite(&mut self, texture: TextureHandle) {
+        self.draw_commands.push(DrawCommand::Sprite {
+            texture,
+            world_matrix: self.world_matrix,
         });
     }
 

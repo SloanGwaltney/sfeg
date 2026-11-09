@@ -490,6 +490,7 @@ mod tests {
             &GameTime::new(TickRate::DEFAULT),
             &crate::input::InputView::empty(),
             &mut (),
+            &mut crate::assets::AssetStore::new(std::path::PathBuf::new()),
         );
     }
 

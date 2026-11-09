@@ -247,7 +247,12 @@ mod tests {
     fn run_ticks(scene: &mut Scene, count: u64) {
         let mut game_time = GameTime::new(TickRate::DEFAULT);
         for _ in 0..count {
-            scene.tick(&game_time, &crate::input::InputView::empty(), &mut ());
+            scene.tick(
+                &game_time,
+                &crate::input::InputView::empty(),
+                &mut (),
+                &mut crate::assets::AssetStore::new(std::path::PathBuf::new()),
+            );
             game_time.advance_one_tick();
         }
     }
@@ -277,7 +282,8 @@ mod tests {
             .draw_commands()
             .iter()
             .map(|command| match command {
-                DrawCommand::FlatMesh { world_matrix, .. } => world_matrix.translation().x(),
+                DrawCommand::FlatMesh { world_matrix, .. }
+                | DrawCommand::Sprite { world_matrix, .. } => world_matrix.translation().x(),
             })
             .collect()
     }
@@ -388,7 +394,9 @@ mod tests {
         // Halfway through the turn, the child is on the arc, not on the
         // straight line between its ends.
         let draw_list = scene.draw(Blend::Between(0.5), 0.5);
-        let DrawCommand::FlatMesh { world_matrix, .. } = draw_list.draw_commands()[0];
+        let DrawCommand::FlatMesh { world_matrix, .. } = draw_list.draw_commands()[0] else {
+            panic!("the object draws a cube");
+        };
         let halfway = world_matrix.translation();
         let diagonal = std::f32::consts::FRAC_1_SQRT_2;
         assert_close(halfway.x(), diagonal);

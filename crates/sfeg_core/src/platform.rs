@@ -4,11 +4,17 @@
 //! [`DrawContext`](crate::DrawContext); the runner collects the result with
 //! [`Core::draw`](crate::Core::draw) and hands it to the renderer as a
 //! [`DrawList`]: plain data, with nothing that depends on wgpu (ADR 0006).
+//!
+//! Textures are decoded in the core and uploaded by the renderer
+//! (ADR 0006). The runner passes the renderer the [`TextureChange`]s from
+//! [`Core::drain_texture_changes_for_renderer`](crate::Core::drain_texture_changes_for_renderer)
+//! before each frame.
 
 use std::num::NonZeroU32;
 
 use bytemuck::NoUninit;
 
+use crate::assets::{DecodedTexture, TextureHandle};
 use crate::camera::Projection;
 use crate::color::Color;
 use crate::input::KeyCode;
@@ -149,6 +155,36 @@ pub enum DrawCommand {
         world_matrix: Matrix4,
         /// Its color.
         color: Color,
+    },
+    /// A texture on a flat square, one unit on each side, centered on the
+    /// object in its local XY plane and facing +Z.
+    ///
+    /// Until the renderer has the texture, such as while it loads, it
+    /// draws a placeholder instead.
+    Sprite {
+        /// Which texture.
+        texture: TextureHandle,
+        /// Where the square is in the world, already interpolated.
+        world_matrix: Matrix4,
+    },
+}
+
+/// A texture for the renderer to upload to, or free from, the GPU.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum TextureChange {
+    /// The texture finished decoding: upload it.
+    Ready {
+        /// Which texture. Sprites drawing it refer to this handle.
+        texture: TextureHandle,
+        /// Its pixels.
+        decoded: DecodedTexture,
+    },
+    /// Every scope holding the texture ended: free its GPU copy. The
+    /// handle is never drawn again.
+    Freed {
+        /// Which texture.
+        texture: TextureHandle,
     },
 }
 

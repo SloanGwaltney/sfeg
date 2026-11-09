@@ -11,6 +11,7 @@
 //! [`Core::draw`], and provides the [`math`] types. What the runner and
 //! renderer take from it lives in [`platform`].
 
+pub mod assets;
 mod camera;
 mod color;
 mod core_loop;
