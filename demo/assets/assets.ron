@@ -1,0 +1,5 @@
+// The demo's asset manifest (ADR 0015): names the code uses, mapped to
+// each asset's kind and file. Paths are relative to this folder.
+{
+    "tree": Texture("textures/tree.png"),
+}

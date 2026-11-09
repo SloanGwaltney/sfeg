@@ -1,8 +1,6 @@
 //! Draws built-in meshes in one flat color, all in one instanced draw call
 //! per mesh.
 
-use std::num::NonZeroU32;
-
 use sfeg_core::platform::{BuiltinMesh, DrawCommand, DrawList};
 use wgpu::util::DeviceExt;
 
@@ -41,8 +39,6 @@ const CUBE_INDICES: [u16; 36] = [
 
 pub(crate) struct FlatMeshPipeline {
     pipeline: wgpu::RenderPipeline,
-    camera_buffer: wgpu::Buffer,
-    camera_bind_group: wgpu::BindGroup,
     meshes_layout: wgpu::BindGroupLayout,
     meshes_buffer: wgpu::Buffer,
     meshes_capacity: usize,
@@ -57,25 +53,13 @@ impl FlatMeshPipeline {
     pub(crate) fn new(
         device: &wgpu::Device,
         color_format: wgpu::TextureFormat,
+        camera_layout: &wgpu::BindGroupLayout,
     ) -> FlatMeshPipeline {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("sfeg flat mesh shader"),
             source: wgpu::ShaderSource::Wgsl(include_str!("flat_mesh.wgsl").into()),
         });
 
-        let camera_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("sfeg camera layout"),
-            entries: &[wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStages::VERTEX,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Uniform,
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
-                },
-                count: None,
-            }],
-        });
         let meshes_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("sfeg flat meshes layout"),
             entries: &[wgpu::BindGroupLayoutEntry {
@@ -90,26 +74,12 @@ impl FlatMeshPipeline {
             }],
         });
 
-        let camera_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("sfeg camera"),
-            size: std::mem::size_of::<[f32; 16]>() as u64,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-        let camera_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("sfeg camera"),
-            layout: &camera_layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: camera_buffer.as_entire_binding(),
-            }],
-        });
         let (meshes_buffer, meshes_bind_group) =
             create_meshes_buffer(device, &meshes_layout, INITIAL_CAPACITY);
 
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("sfeg flat mesh layout"),
-            bind_group_layouts: &[Some(&camera_layout), Some(&meshes_layout)],
+            bind_group_layouts: &[Some(camera_layout), Some(&meshes_layout)],
             immediate_size: 0,
         });
         let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
@@ -168,8 +138,6 @@ impl FlatMeshPipeline {
 
         FlatMeshPipeline {
             pipeline,
-            camera_buffer,
-            camera_bind_group,
             meshes_layout,
             meshes_buffer,
             meshes_capacity: INITIAL_CAPACITY,
@@ -180,25 +148,18 @@ impl FlatMeshPipeline {
         }
     }
 
-    /// Uploads the camera and meshes `draw_list` holds, for a target
-    /// `width_px` by `height_px`.
+    /// Uploads the meshes `draw_list` holds. A draw list without a camera
+    /// draws nothing.
     pub(crate) fn prepare(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         draw_list: &DrawList,
-        width_px: NonZeroU32,
-        height_px: NonZeroU32,
     ) {
         self.cube_data.clear();
-        let Some(camera) = draw_list.camera() else {
+        if draw_list.camera().is_none() {
             return;
-        };
-        queue.write_buffer(
-            &self.camera_buffer,
-            0,
-            bytemuck::bytes_of(&camera.view_projection(width_px, height_px)),
-        );
+        }
         self.cube_data.extend(flat_cubes(draw_list.draw_commands()));
         if self.cube_data.is_empty() {
             return;
@@ -217,14 +178,18 @@ impl FlatMeshPipeline {
     }
 
     /// Records the draw for what [`FlatMeshPipeline::prepare`] uploaded.
-    pub(crate) fn draw(&self, pass: &mut wgpu::RenderPass<'_>) {
+    pub(crate) fn draw(
+        &self,
+        pass: &mut wgpu::RenderPass<'_>,
+        camera_bind_group: &wgpu::BindGroup,
+    ) {
         if self.cube_data.is_empty() {
             return;
         }
         let instances = u32::try_from(self.cube_data.len())
             .expect("the GPU can't hold more meshes than fit in a u32");
         pass.set_pipeline(&self.pipeline);
-        pass.set_bind_group(0, &self.camera_bind_group, &[]);
+        pass.set_bind_group(0, camera_bind_group, &[]);
         pass.set_bind_group(1, &self.meshes_bind_group, &[]);
         pass.set_vertex_buffer(0, self.cube_vertices.slice(..));
         pass.set_index_buffer(self.cube_indices.slice(..), wgpu::IndexFormat::Uint16);

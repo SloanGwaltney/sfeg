@@ -2,6 +2,7 @@ use std::any::{Any, TypeId};
 use std::error::Error;
 use std::fmt;
 
+use crate::assets::{AssetScope, AssetStore, TextureAsset, TextureHandle, TextureState};
 use crate::camera::ActiveCamera;
 use crate::frame::FrameContext;
 use crate::game_object::GameObject;
@@ -209,6 +210,7 @@ impl Scene {
         game_time: &GameTime,
         tick_input: &InputView,
         game_state: &mut dyn Any,
+        assets: &mut AssetStore,
     ) {
         self.set_previous_locals_to_current();
         let mut scene_state = self
@@ -220,6 +222,7 @@ impl Scene {
             tick_input,
             &mut *game_state,
             self,
+            &mut *assets,
         ));
         self.scene_state = Some(scene_state);
         // Spawns are deferred, so no slots are added while this runs.
@@ -241,6 +244,7 @@ impl Scene {
                 game_state: &mut *game_state,
                 current_scene: self,
                 self_handle,
+                assets: &mut *assets,
             });
 
             // Despawns are deferred, so the slot still holds this object.
@@ -472,9 +476,39 @@ pub struct TickContext<'a> {
     game_state: &'a mut dyn Any,
     current_scene: &'a mut Scene,
     self_handle: ObjectHandle,
+    assets: &'a mut AssetStore,
 }
 
 impl TickContext<'_> {
+    /// Starts loading `asset` and holds it until the game ends. Returns its
+    /// handle right away, while the file loads in the background.
+    ///
+    /// Loading an asset that is already loaded or loading gives the same
+    /// handle, and the game holds it too.
+    pub fn load_texture_into_game_scope(&mut self, asset: TextureAsset) -> TextureHandle {
+        self.assets.load_texture(asset, AssetScope::Game)
+    }
+
+    /// Starts loading `asset` and holds it until this scene ends. Returns
+    /// its handle right away, while the file loads in the background.
+    ///
+    /// Loading an asset that is already loaded or loading gives the same
+    /// handle, and this scene holds it too.
+    pub fn load_texture_into_scene_scope(&mut self, asset: TextureAsset) -> TextureHandle {
+        self.assets.load_texture(asset, AssetScope::CurrentScene)
+    }
+
+    /// Where `texture` is in loading.
+    pub fn texture_state(&self, texture: TextureHandle) -> TextureState<'_> {
+        self.assets.texture_state(texture)
+    }
+
+    /// Textures whose loads finished, successfully or not, before this
+    /// tick started (ADR 0015). Each load is reported in exactly one tick.
+    pub fn texture_loads_finished_before_this_tick(&self) -> &[TextureHandle] {
+        self.assets.finished_this_tick()
+    }
+
     /// Game time at the start of this tick.
     pub fn game_time(&self) -> &GameTime {
         self.game_time
@@ -680,7 +714,12 @@ mod tests {
     fn run_ticks(scene: &mut Scene, count: u64) {
         let mut game_time = GameTime::new(TickRate::DEFAULT);
         for _ in 0..count {
-            scene.tick(&game_time, &InputView::empty(), &mut ());
+            scene.tick(
+                &game_time,
+                &InputView::empty(),
+                &mut (),
+                &mut crate::assets::AssetStore::new(std::path::PathBuf::new()),
+            );
             game_time.advance_one_tick();
         }
     }

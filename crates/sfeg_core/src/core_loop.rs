@@ -1,9 +1,12 @@
+use std::path::PathBuf;
 use std::time::Duration;
+
+use crate::assets::{AssetScope, AssetStore, TextureAsset, TextureHandle, TextureState};
 
 use crate::frame::FrameContext;
 use crate::game_state::{GameState, GameStateTickContext};
 use crate::input::{InputBindings, InputState};
-use crate::platform::{DrawList, InputEvent};
+use crate::platform::{DrawList, InputEvent, TextureChange};
 use crate::scene::{Blend, Scene, TransformInterpolation};
 use crate::time::{GameTime, MaxTicksPerFrame, TickRate};
 
@@ -33,6 +36,7 @@ pub struct Core<G: GameState> {
     interpolation_factor: f32,
     transform_interpolation: TransformInterpolation,
     input: InputState,
+    assets: AssetStore,
 }
 
 impl<G: GameState> Core<G> {
@@ -48,6 +52,7 @@ impl<G: GameState> Core<G> {
             max_ticks_per_frame,
             transform_interpolation,
             input_bindings,
+            asset_folder,
         } = settings;
         Core {
             game_state,
@@ -58,6 +63,7 @@ impl<G: GameState> Core<G> {
             interpolation_factor: 0.0,
             transform_interpolation,
             input: InputState::new(input_bindings),
+            assets: AssetStore::new(asset_folder),
         }
     }
 
@@ -118,17 +124,70 @@ impl<G: GameState> Core<G> {
     /// for (ADR 0012).
     ///
     /// Input that arrived since the last tick is seen by this one, in
-    /// [`TickContext::tick_input`](crate::TickContext::tick_input).
+    /// [`TickContext::tick_input`](crate::TickContext::tick_input). So are
+    /// texture loads that finished since then, in
+    /// [`TickContext::texture_loads_finished_before_this_tick`](crate::TickContext::texture_loads_finished_before_this_tick).
     pub fn tick(&mut self) {
+        self.assets.start_tick();
         self.input.apply_pending_to_tick_view();
         let tick_input = self.input.tick_view();
-        let mut ctx = GameStateTickContext::new(&self.game_time, tick_input);
+        let mut ctx = GameStateTickContext::new(&self.game_time, tick_input, &mut self.assets);
         self.game_state.tick(&mut ctx);
-        self.current_scene
-            .tick(&self.game_time, tick_input, &mut self.game_state);
+        self.current_scene.tick(
+            &self.game_time,
+            tick_input,
+            &mut self.game_state,
+            &mut self.assets,
+        );
         self.game_time.advance_one_tick();
         // No real time has passed since this tick.
         self.interpolation_factor = 0.0;
+    }
+
+    /// Starts loading `asset` and holds it until the game ends, such as
+    /// while setting up the first scene. Returns its handle right away,
+    /// while the file loads in the background (ADR 0015).
+    ///
+    /// Loading an asset that is already loaded or loading gives the same
+    /// handle, and the game holds it too.
+    pub fn load_texture_into_game_scope(&mut self, asset: TextureAsset) -> TextureHandle {
+        self.assets.load_texture(asset, AssetScope::Game)
+    }
+
+    /// Starts loading `asset` and holds it until the current scene ends.
+    /// Returns its handle right away, while the file loads in the
+    /// background (ADR 0015).
+    ///
+    /// Loading an asset that is already loaded or loading gives the same
+    /// handle, and the current scene holds it too.
+    pub fn load_texture_into_current_scene_scope(&mut self, asset: TextureAsset) -> TextureHandle {
+        self.assets.load_texture(asset, AssetScope::CurrentScene)
+    }
+
+    /// Where `texture` is in loading.
+    pub fn texture_state(&self, texture: TextureHandle) -> TextureState<'_> {
+        self.assets.texture_state(texture)
+    }
+
+    /// Blocks until every texture load in flight has finished, successfully
+    /// or not.
+    ///
+    /// The windowed runner never calls this: loading must not freeze the
+    /// game (ADR 0015). Headless runs and tests call it so a load finishes
+    /// at a known point. The next tick reports the loads as finished, as
+    /// if they had finished on their own.
+    pub fn block_until_pending_loads_finish(&mut self) {
+        self.assets.block_until_pending_loads_finish();
+    }
+
+    /// Takes the textures the renderer must upload or free since the last
+    /// call, oldest first. The runner calls it before each frame and passes
+    /// the changes to the renderer (ADR 0006).
+    ///
+    /// Each change is handed out once, so only one renderer can follow a
+    /// core.
+    pub fn drain_texture_changes_for_renderer(&mut self) -> Vec<TextureChange> {
+        self.assets.drain_texture_changes_for_renderer()
     }
 
     /// Applies one input event from the platform, such as a key press
@@ -211,6 +270,7 @@ impl<G: GameState> Core<G> {
 ///     max_ticks_per_frame: MaxTicksPerFrame::DEFAULT,
 ///     transform_interpolation: TransformInterpolation::Enabled,
 ///     input_bindings: InputBindings::none(),
+///     asset_folder: PathBuf::from("assets"),
 /// };
 /// ```
 #[derive(Debug, Clone)]
@@ -227,6 +287,10 @@ pub struct CoreSettings {
     /// Which keys drive each input action (ADR 0016). A game that takes no
     /// input sets [`InputBindings::none`].
     pub input_bindings: InputBindings,
+    /// The folder the asset manifest's paths are relative to (ADR 0015),
+    /// usually the folder the manifest is in. A game that loads no assets
+    /// can set an empty path.
+    pub asset_folder: PathBuf,
 }
 
 /// What one call to [`Core::advance`] did.
@@ -267,6 +331,7 @@ mod tests {
             max_ticks_per_frame: MaxTicksPerFrame::DEFAULT,
             transform_interpolation: TransformInterpolation::Enabled,
             input_bindings,
+            asset_folder: PathBuf::new(),
         }
     }
 
@@ -444,7 +509,8 @@ mod tests {
 
     fn first_drawn_x(core: &mut Core<()>) -> f32 {
         match core.draw().draw_commands()[0] {
-            crate::platform::DrawCommand::FlatMesh { world_matrix, .. } => {
+            crate::platform::DrawCommand::FlatMesh { world_matrix, .. }
+            | crate::platform::DrawCommand::Sprite { world_matrix, .. } => {
                 world_matrix.translation().x()
             }
         }
@@ -514,5 +580,47 @@ mod tests {
         });
         core.tick();
         assert!(log.borrow().is_empty());
+    }
+
+    /// Loads a missing texture on its first tick, then records what each
+    /// tick reports as finished.
+    #[derive(Default)]
+    struct LoadOnFirstTick {
+        texture: Option<TextureHandle>,
+        finished_per_tick: Vec<Vec<TextureHandle>>,
+    }
+
+    impl GameState for LoadOnFirstTick {
+        fn tick(&mut self, ctx: &mut GameStateTickContext) {
+            if self.texture.is_none() {
+                self.texture = Some(
+                    ctx.load_texture_into_game_scope(TextureAsset::from_manifest(
+                        "missing",
+                        "missing.png",
+                    )),
+                );
+            }
+            self.finished_per_tick
+                .push(ctx.texture_loads_finished_before_this_tick().to_vec());
+        }
+    }
+
+    #[test]
+    fn a_load_started_in_a_tick_is_reported_by_a_later_tick() {
+        let mut core = new_core(LoadOnFirstTick::default());
+        core.tick();
+        let texture = core.game_state().texture.unwrap();
+        assert!(matches!(core.texture_state(texture), TextureState::Loading));
+        core.block_until_pending_loads_finish();
+        assert!(matches!(
+            core.texture_state(texture),
+            TextureState::Failed(_)
+        ));
+        core.tick();
+        core.tick();
+        assert_eq!(
+            core.game_state().finished_per_tick,
+            [vec![], vec![texture], vec![]]
+        );
     }
 }

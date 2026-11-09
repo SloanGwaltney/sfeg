@@ -6,5 +6,6 @@ fn main() {
         tick_rate: TickRate::DEFAULT,
         max_ticks_per_frame: MaxTicksPerFrame::DEFAULT,
         input_bindings: InputBindings::none(),
+        asset_folder: std::path::PathBuf::new(),
     };
 }

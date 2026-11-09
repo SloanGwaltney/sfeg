@@ -64,6 +64,7 @@ fn derived_actions_drive_a_game() {
             max_ticks_per_frame: MaxTicksPerFrame::DEFAULT,
             transform_interpolation: TransformInterpolation::Enabled,
             input_bindings: bindings,
+            asset_folder: std::path::PathBuf::new(),
         },
     );
     core.apply_input_event(InputEvent::KeyPressed(KeyCode::Space));

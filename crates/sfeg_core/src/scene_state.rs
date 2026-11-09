@@ -1,5 +1,6 @@
 use std::any::Any;
 
+use crate::assets::{AssetScope, AssetStore, TextureAsset, TextureHandle, TextureState};
 use crate::frame::FrameContext;
 use crate::game_object::GameObject;
 use crate::game_state::GameState;
@@ -48,6 +49,7 @@ pub struct SceneStateTickContext<'a> {
     tick_input: &'a InputView,
     game_state: &'a mut dyn Any,
     current_scene: &'a mut Scene,
+    assets: &'a mut AssetStore,
 }
 
 impl<'a> SceneStateTickContext<'a> {
@@ -56,13 +58,44 @@ impl<'a> SceneStateTickContext<'a> {
         tick_input: &'a InputView,
         game_state: &'a mut dyn Any,
         current_scene: &'a mut Scene,
+        assets: &'a mut AssetStore,
     ) -> SceneStateTickContext<'a> {
         SceneStateTickContext {
             game_time,
             tick_input,
             game_state,
             current_scene,
+            assets,
         }
+    }
+
+    /// Starts loading `asset` and holds it until the game ends. Returns its
+    /// handle right away, while the file loads in the background.
+    ///
+    /// Loading an asset that is already loaded or loading gives the same
+    /// handle, and the game holds it too.
+    pub fn load_texture_into_game_scope(&mut self, asset: TextureAsset) -> TextureHandle {
+        self.assets.load_texture(asset, AssetScope::Game)
+    }
+
+    /// Starts loading `asset` and holds it until this scene ends. Returns
+    /// its handle right away, while the file loads in the background.
+    ///
+    /// Loading an asset that is already loaded or loading gives the same
+    /// handle, and this scene holds it too.
+    pub fn load_texture_into_scene_scope(&mut self, asset: TextureAsset) -> TextureHandle {
+        self.assets.load_texture(asset, AssetScope::CurrentScene)
+    }
+
+    /// Where `texture` is in loading.
+    pub fn texture_state(&self, texture: TextureHandle) -> TextureState<'_> {
+        self.assets.texture_state(texture)
+    }
+
+    /// Textures whose loads finished, successfully or not, before this
+    /// tick started (ADR 0015). Each load is reported in exactly one tick.
+    pub fn texture_loads_finished_before_this_tick(&self) -> &[TextureHandle] {
+        self.assets.finished_this_tick()
     }
 
     /// Game time at the start of this tick.
@@ -240,6 +273,7 @@ mod tests {
                 max_ticks_per_frame: MaxTicksPerFrame::DEFAULT,
                 transform_interpolation: TransformInterpolation::Enabled,
                 input_bindings: InputBindings::none(),
+                asset_folder: std::path::PathBuf::new(),
             },
         )
     }
@@ -310,6 +344,7 @@ mod tests {
                 max_ticks_per_frame: MaxTicksPerFrame::DEFAULT,
                 transform_interpolation: TransformInterpolation::Enabled,
                 input_bindings: InputBindings::none(),
+                asset_folder: std::path::PathBuf::new(),
             },
         );
         core.advance(Duration::ZERO);

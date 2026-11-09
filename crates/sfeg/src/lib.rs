@@ -13,7 +13,7 @@ pub use sfeg_core::{
     Perspective, Projection, ProjectionError, Scene, SceneState, SceneStateTickContext,
     TickContext, TickRate, TickRateError, TransformInterpolation, TypedHandleError,
 };
-pub use sfeg_core::{math, platform};
+pub use sfeg_core::{assets, math, platform};
 pub use sfeg_winit::{RunError, WindowSettings, install_default_tracing_subscriber, run};
 
 /// Rendering with no window, into images read back to the CPU. Headless
