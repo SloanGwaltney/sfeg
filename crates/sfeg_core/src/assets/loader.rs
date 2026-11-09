@@ -9,9 +9,18 @@ use std::sync::{Arc, Mutex, PoisonError};
 use super::png_decode::decode_png;
 use super::{DecodedTexture, TextureHandle, TextureLoadError};
 
-/// How many loader threads run. Two keeps one large file from holding up
-/// every other load, without competing much with the game for CPU time.
-const LOADER_THREADS: usize = 2;
+/// The most asset loader threads that run. Two keeps one large file from
+/// holding up every other load, without competing much with the game for
+/// CPU time.
+///
+/// For now all of them start. Later the loader may start fewer, based on
+/// how many threads the CPU has (`std::thread::available_parallelism`),
+/// but never more than this.
+///
+/// Asset loading has its own threads, not a pool shared with other engine
+/// work: loads happen throughout the game and spend time blocked reading
+/// files, so they must not hold up other work, nor wait behind it.
+const MAX_ASSET_LOADER_THREADS: usize = 2;
 
 /// One file for a loader thread to read and decode.
 pub(super) struct TextureLoadJob {
@@ -47,7 +56,7 @@ impl TextureLoader {
         let job_receiver = Arc::new(Mutex::new(job_receiver));
         let mut started = 0;
         let mut last_error = None;
-        for index in 0..LOADER_THREADS {
+        for index in 0..MAX_ASSET_LOADER_THREADS {
             let job_receiver = Arc::clone(&job_receiver);
             let result_sender = result_sender.clone();
             match std::thread::Builder::new()
