@@ -5,6 +5,7 @@ members = [
     "crates/sfeg_wgpu",
     "crates/sfeg_winit",
     "crates/sfeg_macros",
+    "crates/sfeg_build",
     "crates/sfeg",
     "demo",
 ]
@@ -20,6 +21,7 @@ sfeg_core = { path = "crates/sfeg_core" }
 sfeg_wgpu = { path = "crates/sfeg_wgpu" }
 sfeg_winit = { path = "crates/sfeg_winit" }
 sfeg_macros = { path = "crates/sfeg_macros" }
+sfeg_build = { path = "crates/sfeg_build" }
 sfeg = { path = "crates/sfeg" }
 
 # SFEG's own code is entirely safe Rust (see AGENTS.md).
