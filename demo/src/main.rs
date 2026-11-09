@@ -583,4 +583,53 @@ mod tests {
         assert!(count_pixels(&image, is_placeholder_magenta) > 50);
         assert_eq!(count_pixels(&image, is_tree_green), 0);
     }
+
+    /// Releases the scene's loads of one texture on its first tick.
+    struct ReleaseFromSceneOnFirstTick {
+        texture: TextureHandle,
+        loads: u32,
+    }
+
+    impl GameObject for ReleaseFromSceneOnFirstTick {
+        fn tick(&mut self, ctx: &mut TickContext) {
+            for _ in 0..std::mem::take(&mut self.loads) {
+                ctx.release_texture_from_scene_scope_deferred(self.texture)
+                    .unwrap();
+            }
+        }
+    }
+
+    /// Needs a GPU driver. A CPU one, such as Mesa's lavapipe, is enough.
+    #[test]
+    fn a_freed_texture_draws_as_the_placeholder() {
+        let (mut core, _, _) = setup();
+        // Setup loaded it once; this is a second load, for the handle.
+        let tree = core.load_texture_into_current_scene_scope(assets::TREE);
+        core.current_scene_mut()
+            .spawn_immediate(
+                ReleaseFromSceneOnFirstTick {
+                    texture: tree,
+                    loads: 2,
+                },
+                Parent::Root,
+                Transform::IDENTITY,
+            )
+            .unwrap();
+        core.block_until_pending_loads_finish();
+        let mut renderer =
+            OffscreenRenderer::new(NonZeroU32::new(320).unwrap(), NonZeroU32::new(180).unwrap())
+                .unwrap();
+        renderer.apply_texture_changes(core.drain_texture_changes_for_renderer());
+        let image = renderer.render_to_image(&core.draw()).unwrap();
+        assert!(count_pixels(&image, is_tree_green) > 100);
+
+        // Freed when the tick ends. The trees still draw with the old
+        // handle, which the renderer no longer has.
+        core.tick();
+        assert!(matches!(core.texture_state(tree), TextureState::Unloaded));
+        renderer.apply_texture_changes(core.drain_texture_changes_for_renderer());
+        let image = renderer.render_to_image(&core.draw()).unwrap();
+        assert!(count_pixels(&image, is_placeholder_magenta) > 50);
+        assert_eq!(count_pixels(&image, is_tree_green), 0);
+    }
 }
