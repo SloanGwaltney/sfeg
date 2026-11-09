@@ -652,7 +652,7 @@ mod tests {
         assert!(parse_mode(args("--fullscreen")).is_err());
     }
 
-    /// Needs a GPU driver. A CPU one, such as Mesa's lavapipe, is enough.
+    /// Needs a GPU driver.
     #[test]
     fn a_capture_shows_the_walker_and_hat_on_the_floor() {
         let (mut core, _, _) = setup();
@@ -725,7 +725,7 @@ mod tests {
             .count()
     }
 
-    /// Needs a GPU driver. A CPU one, such as Mesa's lavapipe, is enough.
+    /// Needs a GPU driver.
     #[test]
     fn trees_draw_their_texture_once_the_renderer_has_it() {
         let (mut core, _, _) = setup();
@@ -739,7 +739,7 @@ mod tests {
         assert_eq!(count_pixels(&image, is_placeholder_magenta), 0);
     }
 
-    /// Needs a GPU driver. A CPU one, such as Mesa's lavapipe, is enough.
+    /// Needs a GPU driver.
     #[test]
     fn trees_draw_placeholders_until_the_renderer_has_their_texture() {
         let (mut core, _, _) = setup();
@@ -768,7 +768,7 @@ mod tests {
         }
     }
 
-    /// Needs a GPU driver. A CPU one, such as Mesa's lavapipe, is enough.
+    /// Needs a GPU driver.
     #[test]
     fn a_freed_texture_draws_as_the_placeholder() {
         let (mut core, _, _) = setup();
@@ -845,7 +845,7 @@ mod tests {
         assert_eq!(core.game_state().scene_changes, 1);
     }
 
-    /// Needs a GPU driver. A CPU one, such as Mesa's lavapipe, is enough.
+    /// Needs a GPU driver.
     #[test]
     fn walking_back_to_the_meadow_loads_the_trees_again() {
         let (mut core, _, _) = setup();
