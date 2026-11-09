@@ -13,16 +13,19 @@
 
 mod flat_mesh;
 mod offscreen;
+mod sprite;
+mod world;
 
 use std::error::Error;
 use std::fmt;
 use std::num::NonZeroU32;
 use std::sync::Arc;
 
-use sfeg_core::platform::DrawList;
+use sfeg_core::platform::{DrawList, TextureChange};
 use wgpu::rwh::{HasDisplayHandle, HasWindowHandle};
 
-use crate::flat_mesh::{DEPTH_FORMAT, FlatMeshPipeline};
+use crate::flat_mesh::DEPTH_FORMAT;
+use crate::world::WorldPipelines;
 
 pub use crate::offscreen::{
     CapturedImage, CapturedImageError, OffscreenRenderer, OffscreenRendererError,
@@ -64,7 +67,7 @@ pub struct Renderer {
     instance: wgpu::Instance,
     /// Matches the surface's size. `None` while the window has no area.
     depth_view: Option<wgpu::TextureView>,
-    flat_meshes: FlatMeshPipeline,
+    world: WorldPipelines,
 }
 
 impl Renderer {
@@ -131,7 +134,7 @@ impl Renderer {
             view_formats: vec![],
         };
 
-        let flat_meshes = FlatMeshPipeline::new(&device, format);
+        let world = WorldPipelines::new(&device, &queue, format);
         let mut renderer = Renderer {
             window,
             surface,
@@ -141,7 +144,7 @@ impl Renderer {
             config,
             instance,
             depth_view: None,
-            flat_meshes,
+            world,
         };
         renderer.configure_surface();
         Ok(renderer)
@@ -154,6 +157,15 @@ impl Renderer {
         self.config.width = width_px;
         self.config.height = height_px;
         self.configure_surface();
+    }
+
+    /// Uploads textures that became ready and frees ones that were freed,
+    /// from [`Core::drain_texture_changes_for_renderer`](sfeg_core::Core::drain_texture_changes_for_renderer).
+    /// Call it before each frame, so sprites draw with their textures as
+    /// soon as they are ready.
+    pub fn apply_texture_changes(&mut self, changes: Vec<TextureChange>) {
+        self.world
+            .apply_texture_changes(&self.device, &self.queue, changes);
     }
 
     /// Draws `draw_list` as one frame and presents it.
@@ -205,7 +217,7 @@ impl Renderer {
             // buffer.
             return;
         };
-        self.flat_meshes
+        self.world
             .prepare(&self.device, &self.queue, draw_list, width_px, height_px);
         let view = frame
             .texture
@@ -215,7 +227,7 @@ impl Renderer {
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("sfeg frame"),
             });
-        encode_world_pass(&mut encoder, &self.flat_meshes, &view, depth_view);
+        self.world.encode_pass(&mut encoder, &view, depth_view);
         self.queue.submit([encoder.finish()]);
         self.queue.present(frame);
     }
@@ -300,40 +312,6 @@ fn create_depth_view(device: &wgpu::Device, width_px: u32, height_px: u32) -> wg
         view_formats: &[],
     });
     depth.create_view(&wgpu::TextureViewDescriptor::default())
-}
-
-/// Records the pass that clears `color_view` and draws the prepared world
-/// into it. The window and offscreen targets both draw through this, so
-/// a capture shows exactly what the window would.
-fn encode_world_pass(
-    encoder: &mut wgpu::CommandEncoder,
-    flat_meshes: &FlatMeshPipeline,
-    color_view: &wgpu::TextureView,
-    depth_view: &wgpu::TextureView,
-) {
-    let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-        label: Some("sfeg world"),
-        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-            view: color_view,
-            depth_slice: None,
-            resolve_target: None,
-            ops: wgpu::Operations {
-                load: wgpu::LoadOp::Clear(PLACEHOLDER_CLEAR_COLOR),
-                store: wgpu::StoreOp::Store,
-            },
-        })],
-        depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-            view: depth_view,
-            depth_ops: Some(wgpu::Operations {
-                load: wgpu::LoadOp::Clear(1.0),
-                // Nothing reads depth after this pass.
-                store: wgpu::StoreOp::Discard,
-            }),
-            stencil_ops: None,
-        }),
-        ..Default::default()
-    });
-    flat_meshes.draw(&mut pass);
 }
 
 /// Why a [`Renderer`] could not be created.

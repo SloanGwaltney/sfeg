@@ -8,10 +8,10 @@ use std::num::NonZeroU32;
 use std::path::Path;
 use std::sync::mpsc;
 
-use sfeg_core::platform::DrawList;
+use sfeg_core::platform::{DrawList, TextureChange};
 
-use crate::flat_mesh::FlatMeshPipeline;
-use crate::{create_depth_view, encode_world_pass, log_adapter, request_device};
+use crate::world::WorldPipelines;
+use crate::{create_depth_view, log_adapter, request_device};
 
 /// The offscreen target's format: 8-bit RGBA, sRGB-encoded. Reading it
 /// back gives bytes ready for a PNG, with no conversion.
@@ -42,7 +42,7 @@ pub struct OffscreenRenderer {
     /// [`wgpu::COPY_BYTES_PER_ROW_ALIGNMENT`].
     readback_buffer: wgpu::Buffer,
     padded_bytes_per_row: u32,
-    flat_meshes: FlatMeshPipeline,
+    world: WorldPipelines,
 }
 
 impl OffscreenRenderer {
@@ -100,7 +100,7 @@ impl OffscreenRenderer {
             mapped_at_creation: false,
         });
 
-        let flat_meshes = FlatMeshPipeline::new(&device, OFFSCREEN_FORMAT);
+        let world = WorldPipelines::new(&device, &queue, OFFSCREEN_FORMAT);
         Ok(OffscreenRenderer {
             device,
             queue,
@@ -111,8 +111,17 @@ impl OffscreenRenderer {
             depth_view,
             readback_buffer,
             padded_bytes_per_row,
-            flat_meshes,
+            world,
         })
+    }
+
+    /// Uploads textures that became ready and frees ones that were freed,
+    /// from [`Core::drain_texture_changes_for_renderer`](sfeg_core::Core::drain_texture_changes_for_renderer).
+    /// Call it before each frame, so sprites draw with their textures as
+    /// soon as they are ready.
+    pub fn apply_texture_changes(&mut self, changes: Vec<TextureChange>) {
+        self.world
+            .apply_texture_changes(&self.device, &self.queue, changes);
     }
 
     /// Draws `draw_list` as one frame, then blocks until the GPU has
@@ -131,7 +140,7 @@ impl OffscreenRenderer {
         &mut self,
         draw_list: &DrawList,
     ) -> Result<CapturedImage, RenderToImageError> {
-        self.flat_meshes.prepare(
+        self.world.prepare(
             &self.device,
             &self.queue,
             draw_list,
@@ -143,12 +152,8 @@ impl OffscreenRenderer {
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("sfeg offscreen frame"),
             });
-        encode_world_pass(
-            &mut encoder,
-            &self.flat_meshes,
-            &self.color_view,
-            &self.depth_view,
-        );
+        self.world
+            .encode_pass(&mut encoder, &self.color_view, &self.depth_view);
         encoder.copy_texture_to_buffer(
             self.color_texture.as_image_copy(),
             wgpu::TexelCopyBufferInfo {
