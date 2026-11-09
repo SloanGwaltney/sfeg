@@ -14,7 +14,17 @@ pub use sfeg_core::{
     TickContext, TickRate, TickRateError, TransformInterpolation, TypedHandleError,
 };
 pub use sfeg_core::{math, platform};
-pub use sfeg_winit::{RunError, WindowSettings, run};
+pub use sfeg_winit::{RunError, WindowSettings, install_default_tracing_subscriber, run};
+
+/// Rendering with no window, into images read back to the CPU. Headless
+/// runs and tests use it to see what a frame shows. See
+/// [`sfeg_wgpu::OffscreenRenderer`].
+pub mod capture {
+    pub use sfeg_wgpu::{
+        CapturedImage, CapturedImageError, OffscreenRenderer, OffscreenRendererError,
+        RenderToImageError,
+    };
+}
 
 /// Input actions (ADR 0016). See [`sfeg_core::input`].
 pub mod input {

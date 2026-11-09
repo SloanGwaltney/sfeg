@@ -4,7 +4,20 @@
 //! keys, and jumps with Space. A smaller white cube rides on top as its
 //! hat. A fixed camera looks on from above and in front. The game state
 //! says hello once per second of game time.
+//!
+//! With no arguments it opens a window. To run headless and save one frame
+//! as a PNG instead, pass both capture flags:
+//!
+//! ```text
+//! cargo run -p demo -- --capture-after-ticks 60 --capture-path frame.png
+//! ```
 
+use std::error::Error;
+use std::num::NonZeroU32;
+use std::path::PathBuf;
+use std::process::ExitCode;
+
+use sfeg::capture::OffscreenRenderer;
 use sfeg::input::{Action, ActionRegistry, InputBindings};
 use sfeg::math::{Rotation, Transform, Vector3};
 use sfeg::{
@@ -194,16 +207,122 @@ fn setup() -> (Core<HelloGame>, Handle<Walker>, Handle<Hat>) {
     (core, walker, hat)
 }
 
-fn main() -> Result<(), sfeg::RunError> {
-    let (core, _, _) = setup();
-    sfeg::run(
-        core,
-        WindowSettings {
-            title: "SFEG demo".to_string(),
-            logical_width: 1280,
-            logical_height: 720,
-        },
-    )
+/// The window's drawable area, in logical pixels. Captures use the same
+/// numbers as physical pixels, as on a display at 100% scale.
+const WINDOW_WIDTH: u32 = 1280;
+const WINDOW_HEIGHT: u32 = 720;
+
+/// What the command line asked for.
+#[derive(Debug, PartialEq, Eq)]
+enum Mode {
+    /// Open a window and play.
+    Windowed,
+    /// Run headless, then save one frame.
+    Capture {
+        /// How many ticks to run before drawing the frame. Zero captures
+        /// the scene as set up.
+        after_ticks: u64,
+        /// Where to write the PNG.
+        path: PathBuf,
+    },
+}
+
+const USAGE: &str = "usage: demo [--capture-after-ticks <TICKS> --capture-path <FILE.png>]";
+
+/// Reads the arguments after the program name. The capture flags must be
+/// given together: there is no default tick count or path.
+fn parse_mode(args: impl IntoIterator<Item = String>) -> Result<Mode, String> {
+    let mut after_ticks = None;
+    let mut path = None;
+    let mut args = args.into_iter();
+    while let Some(flag) = args.next() {
+        let mut value = || args.next().ok_or_else(|| format!("{flag} needs a value"));
+        match flag.as_str() {
+            "--capture-after-ticks" => {
+                let text = value()?;
+                let ticks = text.parse::<u64>().map_err(|_| {
+                    format!("--capture-after-ticks needs a whole number of ticks, not {text:?}")
+                })?;
+                if after_ticks.replace(ticks).is_some() {
+                    return Err("--capture-after-ticks was given twice".to_string());
+                }
+            }
+            "--capture-path" => {
+                if path.replace(PathBuf::from(value()?)).is_some() {
+                    return Err("--capture-path was given twice".to_string());
+                }
+            }
+            _ => return Err(format!("unknown argument {flag:?}")),
+        }
+    }
+    match (after_ticks, path) {
+        (None, None) => Ok(Mode::Windowed),
+        (Some(after_ticks), Some(path)) => Ok(Mode::Capture { after_ticks, path }),
+        (Some(_), None) => Err("--capture-after-ticks needs --capture-path too".to_string()),
+        (None, Some(_)) => Err("--capture-path needs --capture-after-ticks too".to_string()),
+    }
+}
+
+/// Runs `after_ticks` ticks with no input, draws one frame offscreen, and
+/// writes it to `path`.
+///
+/// It draws right after the last tick, as a window would on a frame that
+/// ran exactly that many ticks.
+fn capture(after_ticks: u64, path: &std::path::Path) -> Result<(), Box<dyn Error>> {
+    sfeg::install_default_tracing_subscriber();
+    let (mut core, _, _) = setup();
+    for _ in 0..after_ticks {
+        core.tick();
+    }
+    let width_px = NonZeroU32::new(WINDOW_WIDTH).expect("non-zero width");
+    let height_px = NonZeroU32::new(WINDOW_HEIGHT).expect("non-zero height");
+    let mut renderer = OffscreenRenderer::new(width_px, height_px)?;
+    let image = renderer.render_to_image(&core.draw())?;
+    image.write_png(path)?;
+    println!(
+        "Captured {width_px}x{height_px} after {after_ticks} ticks to {}",
+        path.display()
+    );
+    Ok(())
+}
+
+fn main() -> ExitCode {
+    let mode = match parse_mode(std::env::args().skip(1)) {
+        Ok(mode) => mode,
+        Err(message) => {
+            eprintln!("{message}\n{USAGE}");
+            return ExitCode::from(2);
+        }
+    };
+    let result = match mode {
+        Mode::Windowed => {
+            let (core, _, _) = setup();
+            sfeg::run(
+                core,
+                WindowSettings {
+                    title: "SFEG demo".to_string(),
+                    logical_width: WINDOW_WIDTH,
+                    logical_height: WINDOW_HEIGHT,
+                },
+            )
+            .map_err(Box::<dyn Error>::from)
+        }
+        Mode::Capture { after_ticks, path } => capture(after_ticks, &path),
+    };
+    match result {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(error) => {
+            // Print the whole chain of causes, not only the top one.
+            let mut message = error.to_string();
+            let mut source = error.source();
+            while let Some(cause) = source {
+                message.push_str(&format!(": {cause}"));
+                source = cause.source();
+            }
+            eprintln!("error: {message}");
+            ExitCode::FAILURE
+        }
+    }
 }
 
 #[cfg(test)]
@@ -269,6 +388,76 @@ mod tests {
         // Holding Space doesn't jump again: it lands and stays down.
         ticks(&mut core, 120);
         assert_eq!(height(&core), 0.0);
+    }
+
+    fn args(text: &str) -> Vec<String> {
+        text.split_whitespace().map(str::to_string).collect()
+    }
+
+    #[test]
+    fn no_arguments_opens_a_window() {
+        assert_eq!(parse_mode(args("")), Ok(Mode::Windowed));
+    }
+
+    #[test]
+    fn both_capture_flags_capture() {
+        assert_eq!(
+            parse_mode(args("--capture-path out.png --capture-after-ticks 0")),
+            Ok(Mode::Capture {
+                after_ticks: 0,
+                path: PathBuf::from("out.png"),
+            })
+        );
+    }
+
+    #[test]
+    fn capture_flags_have_no_defaults() {
+        assert!(parse_mode(args("--capture-after-ticks 60")).is_err());
+        assert!(parse_mode(args("--capture-path out.png")).is_err());
+        assert!(parse_mode(args("--capture-after-ticks")).is_err());
+    }
+
+    #[test]
+    fn bad_capture_arguments_are_rejected() {
+        assert!(parse_mode(args("--capture-after-ticks -1 --capture-path a.png")).is_err());
+        assert!(
+            parse_mode(args(
+                "--capture-after-ticks 1 --capture-after-ticks 2 --capture-path a.png"
+            ))
+            .is_err()
+        );
+        assert!(parse_mode(args("--fullscreen")).is_err());
+    }
+
+    /// Needs a GPU driver. A CPU one, such as Mesa's lavapipe, is enough.
+    #[test]
+    fn a_capture_shows_the_walker_and_hat_on_the_floor() {
+        let (mut core, _, _) = setup();
+        let width_px = NonZeroU32::new(320).unwrap();
+        let height_px = NonZeroU32::new(180).unwrap();
+        let mut renderer = OffscreenRenderer::new(width_px, height_px).unwrap();
+        let image = renderer.render_to_image(&core.draw()).unwrap();
+        assert_eq!((image.width_px(), image.height_px()), (width_px, height_px));
+        assert_eq!(image.rgba8().len(), 320 * 180 * 4);
+
+        // The camera looks at the origin, where the walker stands, so the
+        // middle of the image is orange. Faces are shaded, so only the
+        // hue is checked.
+        let [r, g, b, a] = image.pixel_rgba8(160, 90).unwrap();
+        assert!(
+            r > 150 && g > 60 && g < r && b < 30 && a == 255,
+            "{r} {g} {b} {a}"
+        );
+        // The hat sits above it: shaded white.
+        let [r, g, b, _] = image.pixel_rgba8(160, 79).unwrap();
+        assert!(r > 150 && r == g && g == b, "{r} {g} {b}");
+        // The floor is below, gray-blue and lighter than the background.
+        let [r, g, b, _] = image.pixel_rgba8(160, 110).unwrap();
+        assert!(b > r && r > 50, "{r} {g} {b}");
+        // The top corner is only the clear color.
+        let [r, g, b, _] = image.pixel_rgba8(0, 0).unwrap();
+        assert!(b > g && g > r && b < 80, "{r} {g} {b}");
+        assert_eq!(image.pixel_rgba8(320, 0), None);
     }
 
     #[test]
