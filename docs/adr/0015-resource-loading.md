@@ -2,7 +2,7 @@
 
 **Date**: 2026-11-03
 
-**Status**: Accepted
+**Status**: Superseded by 0025
 
 ## Context
 
@@ -156,3 +156,4 @@ Each kind of asset needs a way to decode, validate, reload, and possibly upload 
 ## Notes
 
 - 2026-11-06: "Hot reloading code is ruled out" refers to Rust code. [0021](0021-scripting-with-luau.md) adds hot reload for mod scripts when the game opts in. Scripts don't register type names, but the behaviors, input actions, and collision layers that mods declare are namespaced as this ADR describes.
+- 2026-11-09: [0025](0025-scene-changes-and-releasing-assets.md) supersedes only this ADR's Scopes section and its rule for loading during a scene change. It adds per-scope load counts, releasing one scope's hold, and the next-scene API. Everything else here stands.

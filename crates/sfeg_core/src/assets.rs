@@ -7,9 +7,11 @@
 //! away. The file is read and decoded on a background thread, so loading
 //! never blocks the game.
 //!
-//! Every load names its scope: the game, or the current scene. An asset
-//! is loaded once, however many times it is asked for, and freed when
-//! every scope holding it has ended.
+//! Every load names its scope: the game, the current scene, or the next
+//! scene. An asset is loaded once, however many times it is asked for.
+//! Each scope counts its loads of it, and a release undoes one of them.
+//! The asset is freed when no scope holds it any longer, which only
+//! happens when a tick ends (ADR 0025).
 //!
 //! Only textures exist so far.
 
@@ -92,7 +94,7 @@ pub enum TextureState<'a> {
     /// Loading failed. It stays failed: loading it again gives the same
     /// handle and the same error.
     Failed(&'a TextureLoadError),
-    /// Every scope that held it has ended, so it was freed.
+    /// No scope holds it any longer, so it was freed.
     Unloaded,
 }
 
@@ -182,16 +184,68 @@ impl Error for TextureLoadError {
     }
 }
 
-/// Which scope a load adds to the asset. Public methods name it instead,
+/// Why a release couldn't be queued (ADR 0025).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum ReleaseTextureError {
+    /// The scope doesn't hold the texture: it never loaded it, its loads
+    /// are all released already (counting releases queued this tick), the
+    /// texture was freed, or the scope is the next scene's and there is no
+    /// next scene.
+    NotHeldByScope,
+}
+
+impl fmt::Display for ReleaseTextureError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ReleaseTextureError::NotHeldByScope => {
+                write!(
+                    f,
+                    "the scope doesn't hold the texture, so it can't release it"
+                )
+            }
+        }
+    }
+}
+
+impl Error for ReleaseTextureError {}
+
+/// How the textures a scope holds are doing, such as to show a loading
+/// bar for the next scene. Every texture the scope holds is counted once,
+/// however many times the scope loaded it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ScopeLoadCounts {
+    /// Textures still being read and decoded.
+    pub loading: usize,
+    /// Textures ready to draw.
+    pub ready: usize,
+    /// Textures that failed to load.
+    pub failed: usize,
+}
+
+impl ScopeLoadCounts {
+    /// Whether every texture the scope holds has finished loading,
+    /// successfully or not. True for a scope that holds nothing.
+    pub fn all_finished(&self) -> bool {
+        self.loading == 0
+    }
+}
+
+/// Which scope a load or release is for. Public methods name it instead,
 /// such as `load_texture_into_game_scope`, so each context offers only
 /// the scopes it may use.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum AssetScope {
     /// Held until the game ends.
     Game,
-    /// Held until the current scene ends.
-    CurrentScene,
+    /// Held until the scene with this scope ends.
+    Scene(SceneScopeId),
 }
+
+/// Tells one scene's scope from another's, such as the current scene's
+/// from the next scene's while both hold a texture. Never reused.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct SceneScopeId(u64);
 
 /// The engine-owned store of loaded assets (ADR 0004).
 pub(crate) struct AssetStore {
@@ -213,6 +267,19 @@ pub(crate) struct AssetStore {
     finished_this_tick: Vec<TextureHandle>,
     /// Textures for the renderer to upload or free, oldest first.
     texture_changes_for_renderer: Vec<TextureChange>,
+    current_scene_scope: SceneScopeId,
+    /// `Some` while the core holds a next scene.
+    next_scene_scope: Option<SceneScopeId>,
+    /// The ID the next scene scope to begin gets.
+    unused_scene_scope_id: u64,
+    /// Releases to apply when the tick ends, oldest first.
+    queued_releases: Vec<QueuedRelease>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct QueuedRelease {
+    texture: TextureHandle,
+    scope: AssetScope,
 }
 
 enum LoaderStatus {
@@ -231,8 +298,16 @@ struct TextureSlot {
 struct TextureEntry {
     asset: TextureAsset,
     load: TextureLoad,
-    held_by_game: bool,
-    held_by_current_scene: bool,
+    /// Each scope that holds it, once. Never empty: an entry with no holds
+    /// is freed.
+    holds: Vec<ScopeHold>,
+}
+
+struct ScopeHold {
+    scope: AssetScope,
+    /// Loads not yet released. Never zero: a hold whose loads are all
+    /// released is removed.
+    loads: u32,
 }
 
 enum TextureLoad {
@@ -253,17 +328,31 @@ impl AssetStore {
             finished_since_last_tick: Vec::new(),
             finished_this_tick: Vec::new(),
             texture_changes_for_renderer: Vec::new(),
+            current_scene_scope: SceneScopeId(0),
+            next_scene_scope: None,
+            unused_scene_scope_id: 1,
+            queued_releases: Vec::new(),
         }
     }
 
-    /// Starts loading `asset` into `scope`, or adds `scope` to it if it is
-    /// already loaded or loading.
+    /// The current scene's scope.
+    pub(crate) fn current_scene_scope(&self) -> AssetScope {
+        AssetScope::Scene(self.current_scene_scope)
+    }
+
+    /// The next scene's scope, if the core holds a next scene.
+    pub(crate) fn next_scene_scope(&self) -> Option<AssetScope> {
+        self.next_scene_scope.map(AssetScope::Scene)
+    }
+
+    /// Starts loading `asset` and adds a load of it to `scope`. If it is
+    /// already loaded or loading, only the load is added.
     pub(crate) fn load_texture(&mut self, asset: TextureAsset, scope: AssetScope) -> TextureHandle {
         if let Some(&texture) = self.textures_by_name.get(asset.name) {
             let entry = self
                 .texture_entry_mut(texture)
                 .expect("a texture stays in the name map only while it is live");
-            entry.hold(scope);
+            entry.add_load(scope);
             return texture;
         }
 
@@ -271,10 +360,9 @@ impl AssetStore {
         let mut entry = TextureEntry {
             asset,
             load: TextureLoad::Loading,
-            held_by_game: false,
-            held_by_current_scene: false,
+            holds: Vec::new(),
         };
-        entry.hold(scope);
+        entry.add_load(scope);
         self.texture_slots[texture.index as usize].entry = Some(entry);
         self.textures_by_name.insert(asset.name, texture);
 
@@ -338,22 +426,110 @@ impl AssetStore {
         std::mem::take(&mut self.texture_changes_for_renderer)
     }
 
-    /// Ends the current scene's scope: every texture only it held is freed.
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "scene changes, which end scene scopes, come later"
-        )
-    )]
-    pub(crate) fn end_current_scene_scope(&mut self) {
+    /// Queues one of `scope`'s loads of `texture` to be released when the
+    /// tick ends, by [`AssetStore::apply_queued_releases`].
+    ///
+    /// # Errors
+    ///
+    /// [`ReleaseTextureError::NotHeldByScope`] if `scope` has no load of
+    /// it left to release, counting releases already queued.
+    pub(crate) fn queue_release(
+        &mut self,
+        texture: TextureHandle,
+        scope: AssetScope,
+    ) -> Result<(), ReleaseTextureError> {
+        let loads = self
+            .texture_entry(texture)
+            .map_or(0, |entry| entry.loads_by(scope));
+        let release = QueuedRelease { texture, scope };
+        let already_queued = self
+            .queued_releases
+            .iter()
+            .filter(|queued| **queued == release)
+            .count();
+        if loads as usize <= already_queued {
+            return Err(ReleaseTextureError::NotHeldByScope);
+        }
+        self.queued_releases.push(release);
+        Ok(())
+    }
+
+    /// Applies the releases queued this tick, freeing each texture that no
+    /// scope holds any longer. Called when the tick ends.
+    pub(crate) fn apply_queued_releases(&mut self) {
+        for release in std::mem::take(&mut self.queued_releases) {
+            let Some(entry) = self.texture_entry_mut(release.texture) else {
+                continue;
+            };
+            entry.remove_load(release.scope);
+            if entry.holds.is_empty() {
+                self.free_texture(release.texture);
+            }
+        }
+    }
+
+    /// Begins the next scene's scope, which loads can name from now on.
+    pub(crate) fn begin_next_scene_scope(&mut self) {
+        assert!(
+            self.next_scene_scope.is_none(),
+            "the core begins a next scene only when there is none"
+        );
+        self.next_scene_scope = Some(SceneScopeId(self.unused_scene_scope_id));
+        self.unused_scene_scope_id += 1;
+    }
+
+    /// Ends the current scene's scope, freeing what only it held, and makes
+    /// the next scene's scope the current one. Called when a switch is
+    /// applied.
+    pub(crate) fn switch_to_next_scene_scope(&mut self) {
+        let next = self
+            .next_scene_scope
+            .take()
+            .expect("the core switches only when there is a next scene");
+        let ended = std::mem::replace(&mut self.current_scene_scope, next);
+        self.end_scope(AssetScope::Scene(ended));
+    }
+
+    /// Ends the next scene's scope, freeing what only it held. Called when
+    /// a discard is applied.
+    pub(crate) fn end_next_scene_scope(&mut self) {
+        let next = self
+            .next_scene_scope
+            .take()
+            .expect("the core discards only when there is a next scene");
+        self.end_scope(AssetScope::Scene(next));
+    }
+
+    /// How the textures `scope` holds are doing.
+    pub(crate) fn scope_load_counts(&self, scope: AssetScope) -> ScopeLoadCounts {
+        let mut counts = ScopeLoadCounts {
+            loading: 0,
+            ready: 0,
+            failed: 0,
+        };
+        for (_, entry) in self.live_textures() {
+            if entry.loads_by(scope) == 0 {
+                continue;
+            }
+            match entry.load {
+                TextureLoad::Loading => counts.loading += 1,
+                TextureLoad::Ready(_) => counts.ready += 1,
+                TextureLoad::Failed(_) => counts.failed += 1,
+            }
+        }
+        counts
+    }
+
+    /// Removes every load `scope` holds, freeing each texture that no scope
+    /// holds any longer.
+    fn end_scope(&mut self, scope: AssetScope) {
         for index in 0..self.texture_slots.len() {
             let slot = &mut self.texture_slots[index];
             let Some(entry) = &mut slot.entry else {
                 continue;
             };
-            entry.held_by_current_scene = false;
-            if !entry.held_by_game {
+            entry.holds.retain(|hold| hold.scope != scope);
+            if entry.holds.is_empty() {
                 let texture = TextureHandle {
                     index: index as u32,
                     generation: slot.generation,
@@ -500,11 +676,35 @@ impl AssetStore {
 }
 
 impl TextureEntry {
-    fn hold(&mut self, scope: AssetScope) {
-        match scope {
-            AssetScope::Game => self.held_by_game = true,
-            AssetScope::CurrentScene => self.held_by_current_scene = true,
+    fn add_load(&mut self, scope: AssetScope) {
+        match self.holds.iter_mut().find(|hold| hold.scope == scope) {
+            Some(hold) => {
+                hold.loads = hold
+                    .loads
+                    .checked_add(1)
+                    .expect("a scope can't load one texture more than u32::MAX times");
+            }
+            None => self.holds.push(ScopeHold { scope, loads: 1 }),
         }
+    }
+
+    /// Removes one of `scope`'s loads, and its hold once none are left.
+    fn remove_load(&mut self, scope: AssetScope) {
+        let Some(position) = self.holds.iter().position(|hold| hold.scope == scope) else {
+            return;
+        };
+        self.holds[position].loads -= 1;
+        if self.holds[position].loads == 0 {
+            self.holds.swap_remove(position);
+        }
+    }
+
+    /// How many loads by `scope` aren't released yet.
+    fn loads_by(&self, scope: AssetScope) -> u32 {
+        self.holds
+            .iter()
+            .find(|hold| hold.scope == scope)
+            .map_or(0, |hold| hold.loads)
     }
 }
 
@@ -541,6 +741,12 @@ mod tests {
     fn write_red_png(folder: &std::path::Path, file: &str) {
         let bytes = encode_png(1, 1, png::ColorType::Rgba, &[255, 0, 0, 255]);
         std::fs::write(folder.join(file), bytes).unwrap();
+    }
+
+    /// Switches to an empty next scene, ending the current scene's scope.
+    fn end_current_scene(store: &mut AssetStore) {
+        store.begin_next_scene_scope();
+        store.switch_to_next_scene_scope();
     }
 
     const RED: TextureAsset = TextureAsset::from_manifest("red", "red.png");
@@ -602,7 +808,7 @@ mod tests {
         let folder = asset_folder("same_handle");
         write_red_png(&folder, "red.png");
         let mut store = AssetStore::new(folder);
-        let first = store.load_texture(RED, AssetScope::CurrentScene);
+        let first = store.load_texture(RED, store.current_scene_scope());
         let second = store.load_texture(RED, AssetScope::Game);
         assert_eq!(first, second);
         store.block_until_pending_loads_finish();
@@ -618,10 +824,10 @@ mod tests {
         write_red_png(&folder, "red.png");
         write_red_png(&folder, "also_red.png");
         let mut store = AssetStore::new(folder);
-        let scene_only = store.load_texture(RED, AssetScope::CurrentScene);
+        let scene_only = store.load_texture(RED, store.current_scene_scope());
         let shared = store.load_texture(
             TextureAsset::from_manifest("also_red", "also_red.png"),
-            AssetScope::CurrentScene,
+            store.current_scene_scope(),
         );
         store.load_texture(
             TextureAsset::from_manifest("also_red", "also_red.png"),
@@ -630,7 +836,7 @@ mod tests {
         store.block_until_pending_loads_finish();
         store.drain_texture_changes_for_renderer();
 
-        store.end_current_scene_scope();
+        end_current_scene(&mut store);
         assert!(matches!(
             store.texture_state(scene_only),
             TextureState::Unloaded
@@ -659,12 +865,159 @@ mod tests {
         let folder = asset_folder("freed_while_loading");
         write_red_png(&folder, "red.png");
         let mut store = AssetStore::new(folder);
-        let red = store.load_texture(RED, AssetScope::CurrentScene);
-        store.end_current_scene_scope();
+        let red = store.load_texture(RED, store.current_scene_scope());
+        end_current_scene(&mut store);
         store.block_until_pending_loads_finish();
         assert!(matches!(store.texture_state(red), TextureState::Unloaded));
         assert!(store.drain_texture_changes_for_renderer().is_empty());
         store.start_tick();
         assert!(store.finished_this_tick().is_empty());
+    }
+
+    #[test]
+    fn a_release_frees_only_once_every_load_by_the_scope_is_released() {
+        let folder = asset_folder("release_counts");
+        write_red_png(&folder, "red.png");
+        let mut store = AssetStore::new(folder);
+        let scene = store.current_scene_scope();
+        // Two objects in one scene each load it.
+        let red = store.load_texture(RED, scene);
+        store.load_texture(RED, scene);
+        store.block_until_pending_loads_finish();
+        store.drain_texture_changes_for_renderer();
+
+        store.queue_release(red, scene).unwrap();
+        store.apply_queued_releases();
+        assert!(matches!(store.texture_state(red), TextureState::Ready(_)));
+
+        store.queue_release(red, scene).unwrap();
+        // Queued, but not applied until the tick ends.
+        assert!(matches!(store.texture_state(red), TextureState::Ready(_)));
+        store.apply_queued_releases();
+        assert!(matches!(store.texture_state(red), TextureState::Unloaded));
+        assert!(matches!(
+            store.drain_texture_changes_for_renderer().as_slice(),
+            [TextureChange::Freed { texture }] if *texture == red
+        ));
+    }
+
+    #[test]
+    fn releasing_more_than_the_scope_loaded_is_an_error() {
+        let folder = asset_folder("over_release");
+        write_red_png(&folder, "red.png");
+        let mut store = AssetStore::new(folder);
+        let scene = store.current_scene_scope();
+        let red = store.load_texture(RED, scene);
+        store.queue_release(red, scene).unwrap();
+        // The queued release already uses up the only load.
+        assert_eq!(
+            store.queue_release(red, scene),
+            Err(ReleaseTextureError::NotHeldByScope)
+        );
+        // The game never loaded it.
+        assert_eq!(
+            store.queue_release(red, AssetScope::Game),
+            Err(ReleaseTextureError::NotHeldByScope)
+        );
+    }
+
+    #[test]
+    fn a_release_never_affects_another_scopes_hold() {
+        let folder = asset_folder("release_other_scope");
+        write_red_png(&folder, "red.png");
+        let mut store = AssetStore::new(folder);
+        let scene = store.current_scene_scope();
+        let red = store.load_texture(RED, scene);
+        store.load_texture(RED, AssetScope::Game);
+        store.block_until_pending_loads_finish();
+
+        store.queue_release(red, scene).unwrap();
+        store.apply_queued_releases();
+        assert!(matches!(store.texture_state(red), TextureState::Ready(_)));
+        // Ending the scene changes nothing either: it no longer holds it.
+        end_current_scene(&mut store);
+        assert!(matches!(store.texture_state(red), TextureState::Ready(_)));
+    }
+
+    #[test]
+    fn a_switch_keeps_what_the_next_scene_holds() {
+        let folder = asset_folder("switch_keeps");
+        write_red_png(&folder, "red.png");
+        write_red_png(&folder, "also_red.png");
+        let also_red = TextureAsset::from_manifest("also_red", "also_red.png");
+        let mut store = AssetStore::new(folder);
+        let old_only = store.load_texture(RED, store.current_scene_scope());
+        let shared = store.load_texture(also_red, store.current_scene_scope());
+
+        store.begin_next_scene_scope();
+        let next = store.next_scene_scope().unwrap();
+        assert_ne!(next, store.current_scene_scope());
+        assert_eq!(store.load_texture(also_red, next), shared);
+        store.block_until_pending_loads_finish();
+
+        store.switch_to_next_scene_scope();
+        assert_eq!(store.current_scene_scope(), next);
+        assert_eq!(store.next_scene_scope(), None);
+        assert!(matches!(
+            store.texture_state(old_only),
+            TextureState::Unloaded
+        ));
+        assert!(matches!(
+            store.texture_state(shared),
+            TextureState::Ready(_)
+        ));
+    }
+
+    #[test]
+    fn a_discard_frees_only_what_the_next_scene_alone_held() {
+        let folder = asset_folder("discard");
+        write_red_png(&folder, "red.png");
+        write_red_png(&folder, "also_red.png");
+        let also_red = TextureAsset::from_manifest("also_red", "also_red.png");
+        let mut store = AssetStore::new(folder);
+        let current = store.load_texture(RED, store.current_scene_scope());
+
+        store.begin_next_scene_scope();
+        let next = store.next_scene_scope().unwrap();
+        store.load_texture(RED, next);
+        let next_only = store.load_texture(also_red, next);
+        store.block_until_pending_loads_finish();
+
+        store.end_next_scene_scope();
+        assert_eq!(store.next_scene_scope(), None);
+        assert!(matches!(
+            store.texture_state(current),
+            TextureState::Ready(_)
+        ));
+        assert!(matches!(
+            store.texture_state(next_only),
+            TextureState::Unloaded
+        ));
+    }
+
+    #[test]
+    fn scope_load_counts_count_each_held_texture_once() {
+        let folder = asset_folder("load_counts");
+        write_red_png(&folder, "red.png");
+        let mut store = AssetStore::new(folder);
+        store.begin_next_scene_scope();
+        let next = store.next_scene_scope().unwrap();
+        store.load_texture(RED, next);
+        store.load_texture(RED, next);
+        store.load_texture(MISSING, next);
+        let counts = store.scope_load_counts(next);
+        assert_eq!((counts.loading, counts.ready, counts.failed), (2, 0, 0));
+        assert!(!counts.all_finished());
+
+        store.block_until_pending_loads_finish();
+        let counts = store.scope_load_counts(next);
+        assert_eq!((counts.loading, counts.ready, counts.failed), (0, 1, 1));
+        assert!(counts.all_finished());
+        // The current scene holds nothing.
+        assert!(
+            store
+                .scope_load_counts(store.current_scene_scope())
+                .all_finished()
+        );
     }
 }

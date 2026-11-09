@@ -252,6 +252,7 @@ mod tests {
                 &crate::input::InputView::empty(),
                 &mut (),
                 &mut crate::assets::AssetStore::new(std::path::PathBuf::new()),
+                &mut crate::scene_change::SceneChange::new(),
             );
             game_time.advance_one_tick();
         }

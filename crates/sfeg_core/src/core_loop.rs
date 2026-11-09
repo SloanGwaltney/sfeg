@@ -8,6 +8,7 @@ use crate::game_state::{GameState, GameStateTickContext};
 use crate::input::{InputBindings, InputState};
 use crate::platform::{DrawList, InputEvent, TextureChange};
 use crate::scene::{Blend, Scene, TransformInterpolation};
+use crate::scene_change::{QueuedSceneChange, SceneChange};
 use crate::time::{GameTime, MaxTicksPerFrame, TickRate};
 
 /// Real time is owed in units of 1 / (10^9 * tick rate) seconds, so one
@@ -26,6 +27,9 @@ const LARGEST_FACTOR: f32 = 1.0 - f32::EPSILON / 2.0;
 pub struct Core<G: GameState> {
     game_state: G,
     current_scene: Scene,
+    /// The next scene, if the game is building one, and the switch or
+    /// discard queued for it (ADR 0025).
+    scene_change: SceneChange,
     game_time: GameTime,
     max_ticks_per_frame: MaxTicksPerFrame,
     /// Real time that [`Core::advance`] hasn't turned into ticks yet, in
@@ -57,6 +61,7 @@ impl<G: GameState> Core<G> {
         Core {
             game_state,
             current_scene: first_scene,
+            scene_change: SceneChange::new(),
             game_time: GameTime::new(tick_rate),
             max_ticks_per_frame,
             owed_real_time: 0,
@@ -121,7 +126,9 @@ impl<G: GameState> Core<G> {
 
     /// Runs exactly one tick (ADR 0008): the game state, then the scene
     /// state, then every object, then the spawns and despawns they asked
-    /// for (ADR 0012).
+    /// for (ADR 0012). Then the texture releases they queued are applied,
+    /// and last the queued switch to the next scene, or discard of it
+    /// (ADR 0025). Textures are only ever freed here.
     ///
     /// Input that arrived since the last tick is seen by this one, in
     /// [`TickContext::tick_input`](crate::TickContext::tick_input). So are
@@ -131,14 +138,22 @@ impl<G: GameState> Core<G> {
         self.assets.start_tick();
         self.input.apply_pending_to_tick_view();
         let tick_input = self.input.tick_view();
-        let mut ctx = GameStateTickContext::new(&self.game_time, tick_input, &mut self.assets);
+        let mut ctx = GameStateTickContext::new(
+            &self.game_time,
+            tick_input,
+            &mut self.assets,
+            &mut self.scene_change,
+        );
         self.game_state.tick(&mut ctx);
         self.current_scene.tick(
             &self.game_time,
             tick_input,
             &mut self.game_state,
             &mut self.assets,
+            &mut self.scene_change,
         );
+        self.assets.apply_queued_releases();
+        self.apply_queued_scene_change();
         self.game_time.advance_one_tick();
         // No real time has passed since this tick.
         self.interpolation_factor = 0.0;
@@ -161,7 +176,8 @@ impl<G: GameState> Core<G> {
     /// Loading an asset that is already loaded or loading gives the same
     /// handle, and the current scene holds it too.
     pub fn load_texture_into_current_scene_scope(&mut self, asset: TextureAsset) -> TextureHandle {
-        self.assets.load_texture(asset, AssetScope::CurrentScene)
+        let scope = self.assets.current_scene_scope();
+        self.assets.load_texture(asset, scope)
     }
 
     /// Where `texture` is in loading.
@@ -250,6 +266,29 @@ impl<G: GameState> Core<G> {
     /// with [`Scene::spawn_immediate`].
     pub fn current_scene_mut(&mut self) -> &mut Scene {
         &mut self.current_scene
+    }
+
+    /// The scene the game is building to switch to, read-only, or `None`
+    /// if there is none (ADR 0025).
+    pub fn next_scene(&self) -> Option<&Scene> {
+        self.scene_change.next_scene()
+    }
+
+    fn apply_queued_scene_change(&mut self) {
+        let Some((change, next_scene)) = self.scene_change.take_queued() else {
+            return;
+        };
+        match change {
+            QueuedSceneChange::SwitchToNextScene => {
+                // Drops the old scene, its scene state, and its objects.
+                self.current_scene = next_scene;
+                self.assets.switch_to_next_scene_scope();
+            }
+            QueuedSceneChange::DiscardNextScene => {
+                drop(next_scene);
+                self.assets.end_next_scene_scope();
+            }
+        }
     }
 }
 
@@ -622,5 +661,245 @@ mod tests {
             core.game_state().finished_per_tick,
             [vec![], vec![texture], vec![]]
         );
+    }
+
+    /// Runs one step per tick, in order, then nothing.
+    type Step = Box<dyn FnMut(&mut GameStateTickContext)>;
+
+    struct ScriptedGameState {
+        steps: std::collections::VecDeque<Step>,
+    }
+
+    impl ScriptedGameState {
+        fn new(steps: Vec<Step>) -> ScriptedGameState {
+            ScriptedGameState {
+                steps: steps.into(),
+            }
+        }
+    }
+
+    impl GameState for ScriptedGameState {
+        fn tick(&mut self, ctx: &mut GameStateTickContext) {
+            if let Some(mut step) = self.steps.pop_front() {
+                step(ctx);
+            }
+        }
+    }
+
+    /// Names a scene, so a test can tell which one is current.
+    struct Level(u32);
+
+    impl crate::SceneState for Level {}
+
+    fn current_level<G: GameState>(core: &Core<G>) -> u32 {
+        core.current_scene().scene_state::<Level>().unwrap().0
+    }
+
+    const SHARED: TextureAsset = TextureAsset::from_manifest("shared", "shared.png");
+    const OLD_ONLY: TextureAsset = TextureAsset::from_manifest("old_only", "old_only.png");
+    const NEW_ONLY: TextureAsset = TextureAsset::from_manifest("new_only", "new_only.png");
+
+    fn is_unloaded(state: TextureState) -> bool {
+        matches!(state, TextureState::Unloaded)
+    }
+
+    #[test]
+    fn a_switch_applies_when_the_tick_ends_and_frees_only_what_the_new_scene_doesnt_hold() {
+        let loaded = Rc::new(RefCell::new(Vec::new()));
+        let loaded_in_step = loaded.clone();
+        let steps: Vec<Step> = vec![
+            Box::new(move |ctx| {
+                ctx.begin_next_scene(Scene::new(Level(2))).unwrap();
+                let shared = ctx.load_texture_into_next_scene_scope(SHARED).unwrap();
+                let new_only = ctx.load_texture_into_next_scene_scope(NEW_ONLY).unwrap();
+                ctx.next_scene_mut()
+                    .unwrap()
+                    .spawn_immediate(DrawnWalker, Parent::Root, Transform::IDENTITY)
+                    .unwrap();
+                loaded_in_step.borrow_mut().extend([shared, new_only]);
+            }),
+            Box::new(|ctx| ctx.switch_to_next_scene_deferred().unwrap()),
+        ];
+        let mut core = Core::new(
+            ScriptedGameState::new(steps),
+            Scene::new(Level(1)),
+            settings(InputBindings::none()),
+        );
+        let shared = core.load_texture_into_current_scene_scope(SHARED);
+        let old_only = core.load_texture_into_current_scene_scope(OLD_ONLY);
+
+        core.tick();
+        // The next scene is built, but the old one is still current.
+        assert_eq!(current_level(&core), 1);
+        assert_eq!(core.next_scene().unwrap().len(), 1);
+        assert_eq!(loaded.borrow()[0], shared);
+
+        core.tick();
+        assert_eq!(current_level(&core), 2);
+        assert_eq!(core.current_scene().len(), 1);
+        assert!(core.next_scene().is_none());
+        assert!(is_unloaded(core.texture_state(old_only)));
+        assert!(!is_unloaded(core.texture_state(shared)));
+        assert!(!is_unloaded(core.texture_state(loaded.borrow()[1])));
+    }
+
+    #[test]
+    fn a_discard_drops_the_next_scene_and_frees_what_only_it_held() {
+        let new_only = Rc::new(RefCell::new(None));
+        let new_only_in_step = new_only.clone();
+        let steps: Vec<Step> = vec![Box::new(move |ctx| {
+            ctx.begin_next_scene(Scene::new(Level(2))).unwrap();
+            ctx.load_texture_into_next_scene_scope(SHARED).unwrap();
+            *new_only_in_step.borrow_mut() =
+                Some(ctx.load_texture_into_next_scene_scope(NEW_ONLY).unwrap());
+            ctx.discard_next_scene_deferred().unwrap();
+            // Still there until the tick ends.
+            assert!(ctx.next_scene().is_some());
+        })];
+        let mut core = Core::new(
+            ScriptedGameState::new(steps),
+            Scene::new(Level(1)),
+            settings(InputBindings::none()),
+        );
+        let shared = core.load_texture_into_current_scene_scope(SHARED);
+        core.tick();
+        assert_eq!(current_level(&core), 1);
+        assert!(core.next_scene().is_none());
+        assert!(!is_unloaded(core.texture_state(shared)));
+        assert!(is_unloaded(core.texture_state(new_only.borrow().unwrap())));
+    }
+
+    #[test]
+    fn scene_change_mistakes_are_typed_errors() {
+        use crate::{BeginNextSceneError, NoNextSceneError, QueueSceneChangeError};
+        let steps: Vec<Step> = vec![Box::new(|ctx| {
+            assert_eq!(
+                ctx.switch_to_next_scene_deferred(),
+                Err(QueueSceneChangeError::NoNextScene)
+            );
+            assert_eq!(
+                ctx.load_texture_into_next_scene_scope(SHARED),
+                Err(NoNextSceneError)
+            );
+            assert_eq!(ctx.next_scene_scope_load_counts(), Err(NoNextSceneError));
+            ctx.begin_next_scene(Scene::new(())).unwrap();
+            assert_eq!(
+                ctx.begin_next_scene(Scene::new(())),
+                Err(BeginNextSceneError::NextSceneExists)
+            );
+            ctx.switch_to_next_scene_deferred().unwrap();
+            assert_eq!(
+                ctx.discard_next_scene_deferred(),
+                Err(QueueSceneChangeError::ChangeAlreadyQueued)
+            );
+        })];
+        let mut core = new_core(ScriptedGameState::new(steps));
+        core.tick();
+        assert!(core.next_scene().is_none());
+    }
+
+    /// A door the player walked through: it tells the scene state, which
+    /// switches scenes.
+    struct Door;
+
+    impl GameObject for Door {
+        fn tick(&mut self, ctx: &mut crate::TickContext) {
+            ctx.scene_state_mut::<LevelWithExit>().unwrap().exit_reached = true;
+        }
+    }
+
+    struct LevelWithExit {
+        exit_reached: bool,
+    }
+
+    impl crate::SceneState for LevelWithExit {
+        fn tick(&mut self, ctx: &mut crate::SceneStateTickContext) {
+            if self.exit_reached && ctx.next_scene().is_none() {
+                ctx.begin_next_scene(Scene::new(Level(2))).unwrap();
+                ctx.switch_to_next_scene_deferred().unwrap();
+            }
+        }
+    }
+
+    #[test]
+    fn an_object_changes_scenes_through_the_scene_state() {
+        let mut core = Core::new(
+            RecordTicks::default(),
+            Scene::new(LevelWithExit {
+                exit_reached: false,
+            }),
+            settings(InputBindings::none()),
+        );
+        core.current_scene_mut()
+            .spawn_immediate(Door, Parent::Root, Transform::IDENTITY)
+            .unwrap();
+        // The door ticks after the scene state, so the scene state sees it
+        // the tick after.
+        core.tick();
+        assert!(
+            core.current_scene()
+                .scene_state::<LevelWithExit>()
+                .is_some()
+        );
+        core.tick();
+        assert_eq!(current_level(&core), 2);
+        // The game state survived the change.
+        core.tick();
+        assert_eq!(core.game_state().seen, [0, 1, 2]);
+    }
+
+    /// Shows one texture, swapping it for another on its first tick.
+    struct PictureFrame {
+        showing: TextureHandle,
+        swapped: bool,
+    }
+
+    impl GameObject for PictureFrame {
+        fn tick(&mut self, ctx: &mut crate::TickContext) {
+            if !self.swapped {
+                let next = ctx.load_texture_into_scene_scope(NEW_ONLY);
+                ctx.release_texture_from_scene_scope_deferred(self.showing)
+                    .unwrap();
+                self.showing = next;
+                self.swapped = true;
+            }
+        }
+    }
+
+    #[test]
+    fn an_object_swapping_textures_frees_only_its_own_load_when_the_tick_ends() {
+        let mut core = new_core(());
+        // Two frames show the same photo; one swaps it.
+        let photo = core.load_texture_into_current_scene_scope(OLD_ONLY);
+        core.load_texture_into_current_scene_scope(OLD_ONLY);
+        core.current_scene_mut()
+            .spawn_immediate(
+                PictureFrame {
+                    showing: photo,
+                    swapped: false,
+                },
+                Parent::Root,
+                Transform::IDENTITY,
+            )
+            .unwrap();
+        core.tick();
+        // The other frame's load keeps it.
+        assert!(!is_unloaded(core.texture_state(photo)));
+
+        // A frame that held the only load frees it.
+        let mut core = new_core(());
+        let photo = core.load_texture_into_current_scene_scope(OLD_ONLY);
+        core.current_scene_mut()
+            .spawn_immediate(
+                PictureFrame {
+                    showing: photo,
+                    swapped: false,
+                },
+                Parent::Root,
+                Transform::IDENTITY,
+            )
+            .unwrap();
+        core.tick();
+        assert!(is_unloaded(core.texture_state(photo)));
     }
 }
