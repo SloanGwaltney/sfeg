@@ -2,7 +2,9 @@ use std::any::{Any, TypeId};
 use std::error::Error;
 use std::fmt;
 
-use crate::assets::{AssetScope, AssetStore, TextureAsset, TextureHandle, TextureState};
+use crate::assets::{
+    AssetScope, AssetStore, ReleaseTextureError, TextureAsset, TextureHandle, TextureState,
+};
 use crate::camera::ActiveCamera;
 use crate::frame::FrameContext;
 use crate::game_object::GameObject;
@@ -10,6 +12,7 @@ use crate::game_state::GameState;
 use crate::handle::{Handle, ObjectHandle};
 use crate::input::InputView;
 use crate::math::Transform;
+use crate::scene_change::SceneChange;
 use crate::scene_state::{SceneState, SceneStateTickContext};
 use crate::time::GameTime;
 
@@ -211,6 +214,7 @@ impl Scene {
         tick_input: &InputView,
         game_state: &mut dyn Any,
         assets: &mut AssetStore,
+        scene_change: &mut SceneChange,
     ) {
         self.set_previous_locals_to_current();
         let mut scene_state = self
@@ -223,6 +227,7 @@ impl Scene {
             &mut *game_state,
             self,
             &mut *assets,
+            scene_change,
         ));
         self.scene_state = Some(scene_state);
         // Spawns are deferred, so no slots are added while this runs.
@@ -495,7 +500,43 @@ impl TickContext<'_> {
     /// Loading an asset that is already loaded or loading gives the same
     /// handle, and this scene holds it too.
     pub fn load_texture_into_scene_scope(&mut self, asset: TextureAsset) -> TextureHandle {
-        self.assets.load_texture(asset, AssetScope::CurrentScene)
+        let scope = self.assets.current_scene_scope();
+        self.assets.load_texture(asset, scope)
+    }
+
+    /// Queues one of the game's loads of `texture` to be released when the
+    /// tick ends (ADR 0025). Once every load by every scope is released or
+    /// its scope has ended, the texture is freed.
+    ///
+    /// Release only what this object loaded ("load what you use").
+    ///
+    /// # Errors
+    ///
+    /// [`ReleaseTextureError::NotHeldByScope`] if the game has no load of
+    /// it left to release, counting releases already queued.
+    pub fn release_texture_from_game_scope_deferred(
+        &mut self,
+        texture: TextureHandle,
+    ) -> Result<(), ReleaseTextureError> {
+        self.assets.queue_release(texture, AssetScope::Game)
+    }
+
+    /// Queues one of this scene's loads of `texture` to be released when
+    /// the tick ends (ADR 0025). Other objects' loads of it are kept, so
+    /// an object can swap textures without breaking theirs.
+    ///
+    /// Release only what this object loaded ("load what you use").
+    ///
+    /// # Errors
+    ///
+    /// [`ReleaseTextureError::NotHeldByScope`] if this scene has no load of
+    /// it left to release, counting releases already queued.
+    pub fn release_texture_from_scene_scope_deferred(
+        &mut self,
+        texture: TextureHandle,
+    ) -> Result<(), ReleaseTextureError> {
+        let scope = self.assets.current_scene_scope();
+        self.assets.queue_release(texture, scope)
     }
 
     /// Where `texture` is in loading.
@@ -719,6 +760,7 @@ mod tests {
                 &InputView::empty(),
                 &mut (),
                 &mut crate::assets::AssetStore::new(std::path::PathBuf::new()),
+                &mut crate::scene_change::SceneChange::new(),
             );
             game_time.advance_one_tick();
         }

@@ -24,6 +24,7 @@ pub mod input;
 pub mod math;
 pub mod platform;
 mod scene;
+mod scene_change;
 mod scene_state;
 mod time;
 
@@ -40,5 +41,6 @@ pub use handle::{Handle, ObjectHandle};
 pub use scene::{
     HierarchyError, Parent, Scene, TickContext, TransformInterpolation, TypedHandleError,
 };
+pub use scene_change::{BeginNextSceneError, NoNextSceneError, QueueSceneChangeError};
 pub use scene_state::{SceneState, SceneStateTickContext};
 pub use time::{GameTime, MaxTicksPerFrame, MaxTicksPerFrameError, TickRate, TickRateError};

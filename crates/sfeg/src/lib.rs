@@ -7,11 +7,12 @@
 //! tests, to check what [`Core::draw`] drew.
 
 pub use sfeg_core::{
-    ActiveCamera, ActiveCameraError, AdvanceSummary, Color, ColorError, Core, CoreSettings,
-    DrawContext, FrameContext, GameObject, GameState, GameStateTickContext, GameTime, Handle,
-    HierarchyError, MaxTicksPerFrame, MaxTicksPerFrameError, ObjectHandle, Orthographic, Parent,
-    Perspective, Projection, ProjectionError, Scene, SceneState, SceneStateTickContext,
-    TickContext, TickRate, TickRateError, TransformInterpolation, TypedHandleError,
+    ActiveCamera, ActiveCameraError, AdvanceSummary, BeginNextSceneError, Color, ColorError, Core,
+    CoreSettings, DrawContext, FrameContext, GameObject, GameState, GameStateTickContext, GameTime,
+    Handle, HierarchyError, MaxTicksPerFrame, MaxTicksPerFrameError, NoNextSceneError,
+    ObjectHandle, Orthographic, Parent, Perspective, Projection, ProjectionError,
+    QueueSceneChangeError, Scene, SceneState, SceneStateTickContext, TickContext, TickRate,
+    TickRateError, TransformInterpolation, TypedHandleError,
 };
 pub use sfeg_core::{assets, math, platform};
 pub use sfeg_winit::{RunError, WindowSettings, install_default_tracing_subscriber, run};
