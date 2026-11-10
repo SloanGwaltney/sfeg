@@ -25,6 +25,7 @@ pub mod math;
 pub mod platform;
 mod scene;
 mod scene_change;
+pub mod scene_file;
 mod scene_state;
 mod time;
 

@@ -97,8 +97,14 @@ impl Scene {
     /// An empty scene with `scene_state` as its scene state (ADR 0012). A
     /// scene without one passes `()`.
     pub fn new(scene_state: impl SceneState) -> Scene {
+        Scene::with_boxed_scene_state(Box::new(scene_state))
+    }
+
+    /// An empty scene with a scene state whose type is only known at run
+    /// time, such as one read from a scene file.
+    pub(crate) fn with_boxed_scene_state(scene_state: Box<dyn SceneState>) -> Scene {
         Scene {
-            scene_state: Some(Box::new(scene_state)),
+            scene_state: Some(scene_state),
             slots: Vec::new(),
             free: Vec::new(),
             scene_commands: SceneCommands::default(),
@@ -132,6 +138,25 @@ impl Scene {
         let handle = self.reserve_now();
         self.insert(handle, Box::new(object), TypeId::of::<T>(), parent, local);
         Ok(Handle::new(handle))
+    }
+
+    /// Adds `object`, whose type is only known at run time, right away.
+    /// Like [`Scene::spawn_immediate`], but `parent` must be alive.
+    pub(crate) fn spawn_boxed_immediate(
+        &mut self,
+        object: Box<dyn GameObject>,
+        type_id: TypeId,
+        parent: Parent,
+        local: Transform,
+    ) -> ObjectHandle {
+        let parent = parent.handle();
+        assert!(
+            parent.is_none_or(|parent| self.is_alive(parent)),
+            "the parent is spawned before its children"
+        );
+        let handle = self.reserve_now();
+        self.insert(handle, object, type_id, parent, local);
+        handle
     }
 
     /// The scene state, or `None` if it isn't an `S`.

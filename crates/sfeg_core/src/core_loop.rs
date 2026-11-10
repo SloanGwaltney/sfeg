@@ -1,14 +1,18 @@
 use std::path::PathBuf;
 use std::time::Duration;
 
-use crate::assets::{AssetScope, AssetStore, TextureAsset, TextureHandle, TextureState};
+use crate::assets::{
+    AssetManifest, AssetScope, AssetStore, SceneFileAsset, TextureAsset, TextureHandle,
+    TextureState,
+};
 
 use crate::frame::FrameContext;
 use crate::game_state::{GameState, GameStateTickContext};
 use crate::input::{InputBindings, InputState};
 use crate::platform::{DrawList, InputEvent, TextureChange};
 use crate::scene::{Blend, Scene, TransformInterpolation};
-use crate::scene_change::{QueuedSceneChange, SceneChange};
+use crate::scene_change::{SceneChange, SceneChangeToApply};
+use crate::scene_file::{SceneFileError, SceneFileTree, SceneTypeRegistry, build_scene};
 use crate::time::{GameTime, MaxTicksPerFrame, TickRate};
 
 /// Real time is owed in units of 1 / (10^9 * tick rate) seconds, so one
@@ -41,6 +45,10 @@ pub struct Core<G: GameState> {
     transform_interpolation: TransformInterpolation,
     input: InputState,
     assets: AssetStore,
+    /// The types scene files can name (ADR 0026).
+    scene_types: SceneTypeRegistry,
+    /// The assets scene files can name (ADR 0026).
+    asset_manifest: AssetManifest,
 }
 
 impl<G: GameState> Core<G> {
@@ -57,6 +65,8 @@ impl<G: GameState> Core<G> {
             transform_interpolation,
             input_bindings,
             asset_folder,
+            asset_manifest,
+            scene_types,
         } = settings;
         Core {
             game_state,
@@ -69,7 +79,40 @@ impl<G: GameState> Core<G> {
             transform_interpolation,
             input: InputState::new(input_bindings),
             assets: AssetStore::new(asset_folder),
+            scene_types,
+            asset_manifest,
         }
+    }
+
+    /// Creates a core that runs `game_state`, starting in the scene
+    /// `first_scene_file` describes, with `settings` (ADR 0026).
+    ///
+    /// It blocks while the file is read and built, which happens before the
+    /// window opens. The textures the file refers to load into the first
+    /// scene's scope in the background, like any other load, and draw as
+    /// placeholders until they are ready.
+    ///
+    /// # Errors
+    ///
+    /// The [`SceneFileError`] that stopped the file from loading, such as
+    /// a type it names that isn't in [`CoreSettings::scene_types`].
+    pub fn new_with_first_scene_file(
+        game_state: G,
+        first_scene_file: SceneFileAsset,
+        settings: CoreSettings,
+    ) -> Result<Core<G>, SceneFileError> {
+        let mut core = Core::new(game_state, Scene::new(()), settings);
+        let path = core.assets.asset_folder().join(first_scene_file.path());
+        let tree = SceneFileTree::read(&path)?;
+        let scope = core.assets.current_scene_scope();
+        core.current_scene = build_scene(
+            tree,
+            &core.scene_types,
+            &core.asset_manifest,
+            &mut core.assets,
+            scope,
+        )?;
+        Ok(core)
     }
 
     /// Runs one rendered frame's worth of game (ADR 0008): adds `real_dt`
@@ -154,6 +197,11 @@ impl<G: GameState> Core<G> {
         );
         self.assets.apply_queued_releases();
         self.apply_queued_scene_change();
+        self.scene_change.build_next_scene_if_file_read(
+            &self.scene_types,
+            &self.asset_manifest,
+            &mut self.assets,
+        );
         self.game_time.advance_one_tick();
         // No real time has passed since this tick.
         self.interpolation_factor = 0.0;
@@ -185,8 +233,9 @@ impl<G: GameState> Core<G> {
         self.assets.texture_state(texture)
     }
 
-    /// Blocks until every texture load in flight has finished, successfully
-    /// or not.
+    /// Blocks until every texture load and scene file read in flight has
+    /// finished, successfully or not. A next scene whose file was read is
+    /// built when the next tick ends, and its textures start loading then.
     ///
     /// The windowed runner never calls this: loading must not freeze the
     /// game (ADR 0015). Headless runs and tests call it so a load finishes
@@ -275,19 +324,16 @@ impl<G: GameState> Core<G> {
     }
 
     fn apply_queued_scene_change(&mut self) {
-        let Some((change, next_scene)) = self.scene_change.take_queued() else {
+        let Some(change) = self.scene_change.take_queued() else {
             return;
         };
         match change {
-            QueuedSceneChange::SwitchToNextScene => {
+            SceneChangeToApply::SwitchTo(next_scene) => {
                 // Drops the old scene, its scene state, and its objects.
                 self.current_scene = next_scene;
                 self.assets.switch_to_next_scene_scope();
             }
-            QueuedSceneChange::DiscardNextScene => {
-                drop(next_scene);
-                self.assets.end_next_scene_scope();
-            }
+            SceneChangeToApply::Discarded => self.assets.end_next_scene_scope(),
         }
     }
 }
@@ -310,6 +356,8 @@ impl<G: GameState> Core<G> {
 ///     transform_interpolation: TransformInterpolation::Enabled,
 ///     input_bindings: InputBindings::none(),
 ///     asset_folder: PathBuf::from("assets"),
+///     asset_manifest: AssetManifest::EMPTY,
+///     scene_types: SceneTypeRegistry::new(),
 /// };
 /// ```
 #[derive(Debug, Clone)]
@@ -330,6 +378,13 @@ pub struct CoreSettings {
     /// usually the folder the manifest is in. A game that loads no assets
     /// can set an empty path.
     pub asset_folder: PathBuf,
+    /// Every asset in the manifest, so scene files can refer to them as
+    /// `Asset("name")` (ADR 0026). Games pass the `MANIFEST` constant
+    /// `sfeg_build` generates, or [`AssetManifest::EMPTY`].
+    pub asset_manifest: AssetManifest,
+    /// The object and scene state types scene files can name (ADR 0014,
+    /// 0026). A game without scene files sets [`SceneTypeRegistry::new`].
+    pub scene_types: SceneTypeRegistry,
 }
 
 /// What one call to [`Core::advance`] did.
@@ -371,6 +426,8 @@ mod tests {
             transform_interpolation: TransformInterpolation::Enabled,
             input_bindings,
             asset_folder: PathBuf::new(),
+            asset_manifest: AssetManifest::EMPTY,
+            scene_types: SceneTypeRegistry::new(),
         }
     }
 

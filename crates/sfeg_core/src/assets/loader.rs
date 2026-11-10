@@ -8,6 +8,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 
 use super::png_decode::decode_png;
 use super::{DecodedTexture, TextureHandle, TextureLoadError};
+use crate::scene_file::{SceneFileError, SceneFileTree};
 
 /// The most asset loader threads that run. Two keeps one large file from
 /// holding up every other load, without competing much with the game for
@@ -23,35 +24,54 @@ use super::{DecodedTexture, TextureHandle, TextureLoadError};
 const MAX_ASSET_LOADER_THREADS: usize = 2;
 
 /// One file for a loader thread to read and decode.
-pub(super) struct TextureLoadJob {
-    pub(super) texture: TextureHandle,
-    pub(super) path: PathBuf,
+pub(super) enum LoadJob {
+    Texture {
+        texture: TextureHandle,
+        path: PathBuf,
+    },
+    /// Reads and parses a scene file. Building it needs the game's types,
+    /// so that happens on the main thread.
+    SceneFile {
+        read: SceneFileReadId,
+        path: PathBuf,
+    },
 }
 
+/// Tells one scene file read from another, so a read for a next scene
+/// that was discarded can't be mistaken for a later one. Never reused.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct SceneFileReadId(pub(super) u64);
+
 /// What a loader thread produced for one job.
-pub(super) struct TextureLoadResult {
-    pub(super) texture: TextureHandle,
-    pub(super) result: Result<DecodedTexture, TextureLoadError>,
+pub(super) enum LoadResult {
+    Texture {
+        texture: TextureHandle,
+        result: Result<DecodedTexture, TextureLoadError>,
+    },
+    SceneFile {
+        read: SceneFileReadId,
+        result: Result<SceneFileTree, SceneFileError>,
+    },
 }
 
 /// The loader threads, and the channels to and from them.
 ///
 /// The threads stop on their own once this is dropped, after finishing the
 /// job they are on.
-pub(super) struct TextureLoader {
-    jobs: Sender<TextureLoadJob>,
-    results: Receiver<TextureLoadResult>,
+pub(super) struct AssetLoader {
+    jobs: Sender<LoadJob>,
+    results: Receiver<LoadResult>,
 }
 
-impl TextureLoader {
+impl AssetLoader {
     /// Starts the loader threads.
     ///
     /// # Errors
     ///
     /// The operating system's error if no thread could start. If only
     /// some could, the loader runs with fewer.
-    pub(super) fn start() -> Result<TextureLoader, std::io::Error> {
-        let (jobs, job_receiver) = mpsc::channel::<TextureLoadJob>();
+    pub(super) fn start() -> Result<AssetLoader, std::io::Error> {
+        let (jobs, job_receiver) = mpsc::channel::<LoadJob>();
         let (result_sender, results) = mpsc::channel();
         let job_receiver = Arc::new(Mutex::new(job_receiver));
         let mut started = 0;
@@ -72,7 +92,7 @@ impl TextureLoader {
         }
         match (started, last_error) {
             (0, Some(error)) => Err(error),
-            _ => Ok(TextureLoader { jobs, results }),
+            _ => Ok(AssetLoader { jobs, results }),
         }
     }
 
@@ -82,14 +102,14 @@ impl TextureLoader {
     ///
     /// Gives the job back if every loader thread has stopped, which only
     /// happens if they all panicked outside a decoder.
-    pub(super) fn queue(&self, job: TextureLoadJob) -> Result<(), TextureLoadJob> {
+    pub(super) fn queue(&self, job: LoadJob) -> Result<(), LoadJob> {
         self.jobs.send(job).map_err(|error| error.0)
     }
 
     /// A finished load, if one is waiting. Never blocks.
     ///
     /// `Err(Disconnected)` means every loader thread has stopped.
-    pub(super) fn try_take_result(&self) -> Result<TextureLoadResult, TryRecvError> {
+    pub(super) fn try_take_result(&self) -> Result<LoadResult, TryRecvError> {
         self.results.try_recv()
     }
 
@@ -98,15 +118,12 @@ impl TextureLoader {
     /// # Errors
     ///
     /// If every loader thread has stopped, so nothing will ever finish.
-    pub(super) fn wait_for_result(&self) -> Result<TextureLoadResult, RecvError> {
+    pub(super) fn wait_for_result(&self) -> Result<LoadResult, RecvError> {
         self.results.recv()
     }
 }
 
-fn run_loader_thread(
-    job_receiver: &Mutex<Receiver<TextureLoadJob>>,
-    result_sender: &Sender<TextureLoadResult>,
-) {
+fn run_loader_thread(job_receiver: &Mutex<Receiver<LoadJob>>, result_sender: &Sender<LoadResult>) {
     loop {
         // Holding the lock only while waiting, so the other threads can
         // take jobs while this one decodes. Receiving never panics, so the
@@ -119,10 +136,15 @@ fn run_loader_thread(
             // The store was dropped.
             return;
         };
-        let result = read_and_decode(&job.path);
-        let finished = TextureLoadResult {
-            texture: job.texture,
-            result,
+        let finished = match job {
+            LoadJob::Texture { texture, path } => LoadResult::Texture {
+                texture,
+                result: read_and_decode(&path),
+            },
+            LoadJob::SceneFile { read, path } => LoadResult::SceneFile {
+                read,
+                result: SceneFileTree::read(&path),
+            },
         };
         if result_sender.send(finished).is_err() {
             // The store was dropped while this load ran.

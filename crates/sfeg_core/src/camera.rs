@@ -12,6 +12,8 @@ use std::error::Error;
 use std::f32::consts::PI;
 use std::fmt;
 
+use serde::Deserialize;
+
 use crate::handle::ObjectHandle;
 
 /// A perspective projection: things farther away look smaller, as in most
@@ -19,7 +21,12 @@ use crate::handle::ObjectHandle;
 ///
 /// The width shown follows from the height and the render target's aspect
 /// ratio, which is read each frame, so resizing never distorts the view.
-#[derive(Debug, Clone, Copy, PartialEq)]
+///
+/// In scene files it is written with named fields, such as
+/// `Perspective(vertical_fov_radians: 1.0472, near: 0.1, far: 100.0)`, and
+/// checked like [`Perspective::new`].
+#[derive(Debug, Clone, Copy, PartialEq, Deserialize)]
+#[serde(try_from = "PerspectiveFields")]
 pub struct Perspective {
     vertical_fov_radians: f32,
     near: f32,
@@ -102,7 +109,12 @@ impl Perspective {
 ///
 /// The width shown follows from the height and the render target's aspect
 /// ratio, which is read each frame, so resizing never distorts the view.
-#[derive(Debug, Clone, Copy, PartialEq)]
+///
+/// In scene files it is written with named fields, such as
+/// `Orthographic(visible_height: 10.0, near: 0.0, far: 100.0)`, and
+/// checked like [`Orthographic::new`].
+#[derive(Debug, Clone, Copy, PartialEq, Deserialize)]
+#[serde(try_from = "OrthographicFields")]
 pub struct Orthographic {
     visible_height: f32,
     near: f32,
@@ -178,7 +190,7 @@ impl Orthographic {
 }
 
 /// How a camera's view maps onto the screen: one of the projection types.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Deserialize)]
 pub enum Projection {
     /// See [`Perspective`].
     Perspective(Perspective),
@@ -247,6 +259,40 @@ impl fmt::Display for ProjectionError {
 }
 
 impl Error for ProjectionError {}
+
+/// The serialized form of [`Perspective`], with named fields.
+#[derive(Deserialize)]
+#[serde(rename = "Perspective", deny_unknown_fields)]
+struct PerspectiveFields {
+    vertical_fov_radians: f32,
+    near: f32,
+    far: f32,
+}
+
+impl TryFrom<PerspectiveFields> for Perspective {
+    type Error = ProjectionError;
+
+    fn try_from(fields: PerspectiveFields) -> Result<Perspective, ProjectionError> {
+        Perspective::new(fields.vertical_fov_radians, fields.near, fields.far)
+    }
+}
+
+/// The serialized form of [`Orthographic`], with named fields.
+#[derive(Deserialize)]
+#[serde(rename = "Orthographic", deny_unknown_fields)]
+struct OrthographicFields {
+    visible_height: f32,
+    near: f32,
+    far: f32,
+}
+
+impl TryFrom<OrthographicFields> for Orthographic {
+    type Error = ProjectionError;
+
+    fn try_from(fields: OrthographicFields) -> Result<Orthographic, ProjectionError> {
+        Orthographic::new(fields.visible_height, fields.near, fields.far)
+    }
+}
 
 /// The scene's active camera: the object it looks from and the projection
 /// it looks through (ADR 0024).

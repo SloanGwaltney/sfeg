@@ -20,9 +20,11 @@ use super::{Matrix4, Rotation, Vector3};
 /// Scale may be zero or negative. Zero hides an object and negative mirrors
 /// it, such as flipping a 2D sprite.
 ///
-/// In data files it is written with named fields, all required:
-/// `(position: (x: 0.0, y: 0.0, z: 0.0), rotation: (x: 0.0, y: 0.0, z: 0.0, w: 1.0), scale: (x: 1.0, y: 1.0, z: 1.0))`.
-/// Loading checks it like [`Transform::new`].
+/// In data files it is written with named fields, such as
+/// `(position: (x: 0.0, y: 2.0, z: 0.0), rotation: (x: 0.0, y: 0.0, z: 0.0, w: 1.0), scale: (x: 1.0, y: 1.0, z: 1.0))`.
+/// Any field can be left out: a missing position is zero, a missing
+/// rotation is [`Rotation::IDENTITY`], and a missing scale is one. Loading
+/// checks it like [`Transform::new`].
 #[derive(Clone, Copy, PartialEq, Debug, Serialize, Deserialize)]
 #[serde(try_from = "TransformFields", into = "TransformFields")]
 pub struct Transform {
@@ -193,9 +195,24 @@ impl Error for TransformError {}
 #[derive(Clone, Copy, Serialize, Deserialize)]
 #[serde(rename = "Transform", deny_unknown_fields)]
 struct TransformFields {
+    #[serde(default = "zero_position")]
     position: Vector3,
+    #[serde(default = "no_rotation")]
     rotation: Rotation,
+    #[serde(default = "unit_scale")]
     scale: Vector3,
+}
+
+fn zero_position() -> Vector3 {
+    Vector3::ZERO
+}
+
+fn no_rotation() -> Rotation {
+    Rotation::IDENTITY
+}
+
+fn unit_scale() -> Vector3 {
+    Vector3::ONE
 }
 
 impl TryFrom<TransformFields> for Transform {
@@ -372,8 +389,17 @@ mod tests {
         );
         assert_eq!(ron::from_str::<Transform>(&text).unwrap(), t);
 
-        // All fields are required.
-        assert!(ron::from_str::<Transform>("(position: (x: 0.0, y: 0.0, z: 0.0))").is_err());
+        // Missing fields are the identity's.
+        assert_eq!(
+            ron::from_str::<Transform>("()").unwrap(),
+            Transform::IDENTITY
+        );
+        let scaled = ron::from_str::<Transform>("(scale: (x: 2.0, y: 2.0, z: 2.0))").unwrap();
+        assert_eq!(scaled.position(), Vector3::ZERO);
+        assert_eq!(scaled.rotation(), Rotation::IDENTITY);
+        assert_eq!(scaled.scale(), Vector3::new(2.0, 2.0, 2.0));
+        // Unknown fields are still rejected.
+        assert!(ron::from_str::<Transform>("(positon: (x: 0.0, y: 0.0, z: 0.0))").is_err());
         // Non-finite values are rejected on load.
         let error = ron::from_str::<Transform>(
             "(position: (x: inf, y: 0.0, z: 0.0), rotation: (x: 0.0, y: 0.0, z: 0.0, w: 1.0), scale: (x: 1.0, y: 1.0, z: 1.0))",

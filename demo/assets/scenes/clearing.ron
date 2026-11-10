@@ -1,0 +1,50 @@
+// The clearing: no trees, a sandy floor, and a door on the left edge.
+(
+    scene_state: (type: "Level", data: (level: Clearing, walker: Object("walker"))),
+    // Above and in front, tilted down toward the middle of the floor.
+    active_camera: (
+        object: Object("camera"),
+        projection: Perspective(vertical_fov_radians: 1.0471976, near: 0.1, far: 100.0),
+    ),
+    objects: [
+        (
+            type: "Floor",
+            transform: (
+                position: (x: 0.0, y: -0.55, z: 0.0),
+                scale: (x: 10.0, y: 0.1, z: 6.0),
+            ),
+            data: (level: Clearing),
+        ),
+        (
+            type: "Walker",
+            id: "walker",
+            data: (speed: 3.0, jump_speed: 6.0, gravity: 20.0, spin_speed: 1.5),
+            children: [
+                (
+                    type: "Hat",
+                    transform: (
+                        position: (x: 0.0, y: 0.75, z: 0.0),
+                        scale: (x: 0.5, y: 0.5, z: 0.5),
+                    ),
+                ),
+            ],
+        ),
+        // Just past the floor's edge, as tall as the walker with its hat.
+        (
+            type: "Door",
+            transform: (
+                position: (x: -5.2, y: 0.25, z: 0.0),
+                scale: (x: 0.2, y: 1.5, z: 1.5),
+            ),
+            data: (side: Left),
+        ),
+        (
+            type: "FixedCamera",
+            id: "camera",
+            transform: (
+                position: (x: 0.0, y: 3.0, z: 10.0),
+                rotation: (x: -0.14521314, y: 0.0, z: 0.0, w: 0.98940040),
+            ),
+        ),
+    ],
+)
