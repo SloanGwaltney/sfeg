@@ -31,6 +31,10 @@ pub mod capture {
 /// [`sfeg_core::scene_file`].
 pub mod scene_file {
     pub use sfeg_core::scene_file::*;
+    /// Lets scene files hold a plain data type, such as an enum, inside an
+    /// object's or scene state's fields: `#[sfeg::scene_file_data]` on the
+    /// type. It only derives `Deserialize`.
+    pub use sfeg_macros::scene_file_data;
     /// Lets scene files name a game object type:
     /// `#[sfeg::scene_file_object(name = "Door")]` on the type. It also
     /// derives `Deserialize` for the type's fields, so `#[serde(...)]`
@@ -43,7 +47,7 @@ pub mod scene_file {
     pub use sfeg_macros::scene_file_state;
 }
 
-pub use sfeg_macros::{scene_file_object, scene_file_state};
+pub use sfeg_macros::{scene_file_data, scene_file_object, scene_file_state};
 
 /// The serde version SFEG reads scene files with. The scene file macros
 /// derive `Deserialize` through it, so games don't depend on serde

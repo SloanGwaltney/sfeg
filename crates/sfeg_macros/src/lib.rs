@@ -223,3 +223,39 @@ fn is_valid_type_name(name: &str) -> bool {
         .is_some_and(|first| first.is_ascii_alphabetic())
         && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
 }
+
+/// Lets scene files hold a plain data type inside an object's or scene
+/// state's fields, such as an enum (ADR 0026):
+///
+/// ```ignore
+/// #[sfeg::scene_file_data]
+/// enum DoorSide {
+///     Left,
+///     Right,
+/// }
+/// ```
+///
+/// It only derives `Deserialize` through `sfeg::serde`, so games don't
+/// depend on serde themselves. Unlike `scene_file_object`, the type has no
+/// name and can't be registered: it only appears inside another type's
+/// `data`.
+///
+/// Put it above any `#[derive(...)]` on the type.
+#[proc_macro_attribute]
+pub fn scene_file_data(attribute: TokenStream, item: TokenStream) -> TokenStream {
+    if !attribute.is_empty() {
+        return syn::Error::new(
+            Span::call_site(),
+            "`scene_file_data` takes no arguments: the type has no name in scene files",
+        )
+        .to_compile_error()
+        .into();
+    }
+    let input = parse_macro_input!(item as DeriveInput);
+    quote! {
+        #[derive(::sfeg::serde::Deserialize)]
+        #[serde(crate = "::sfeg::serde")]
+        #input
+    }
+    .into()
+}
