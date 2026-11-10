@@ -6,12 +6,14 @@
 //! ```ron
 //! {
 //!     "player_idle": Texture("textures/player-idle.png"),
+//!     "meadow": SceneFile("scenes/meadow.ron"),
 //! }
 //! ```
 //!
 //! Its `build.rs` calls [`generate_asset_constants`], which checks the
 //! manifest and writes a constant for each name, such as
-//! `PLAYER_IDLE`. The game includes them in a module:
+//! `PLAYER_IDLE`, plus `MANIFEST`, which lists them all for
+//! `CoreSettings::asset_manifest`. The game includes them in a module:
 //!
 //! ```ignore
 //! mod assets {
@@ -20,7 +22,9 @@
 //! ```
 //!
 //! A misspelled name in code is then a compile error, and a manifest path
-//! that doesn't exist fails the build.
+//! that doesn't exist fails the build. So does a scene file whose
+//! `Asset("name")` names nothing in the manifest, or whose `Object("id")`
+//! names no ID in the same file (ADR 0026).
 
 use std::error::Error;
 use std::fmt;
@@ -137,13 +141,19 @@ struct ManifestAsset {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum AssetKind {
     Texture,
+    SceneFile,
 }
 
 /// An entry's value in the manifest's RON.
 #[derive(Deserialize)]
 enum ManifestEntry {
     Texture(String),
+    SceneFile(String),
 }
+
+/// The generated constant that lists every asset, so no asset may take its
+/// name.
+const MANIFEST_CONSTANT_NAME: &str = "manifest";
 
 /// The manifest's entries in file order, keeping duplicates so they can be
 /// reported instead of one silently replacing the other.
@@ -191,9 +201,12 @@ fn check_manifest(
     for (name, entry) in entries {
         let (kind, path) = match entry {
             ManifestEntry::Texture(path) => (AssetKind::Texture, path),
+            ManifestEntry::SceneFile(path) => (AssetKind::SceneFile, path),
         };
         if !is_valid_name(&name) {
             problems.push(ManifestProblem::InvalidName { name: name.clone() });
+        } else if name == MANIFEST_CONSTANT_NAME {
+            problems.push(ManifestProblem::ReservedName { name: name.clone() });
         } else if assets.iter().any(|asset| asset.name == name) {
             problems.push(ManifestProblem::DuplicateName { name: name.clone() });
         }
@@ -215,6 +228,11 @@ fn check_manifest(
         }
         assets.push(ManifestAsset { name, kind, path });
     }
+    for asset in &assets {
+        if asset.kind == AssetKind::SceneFile {
+            check_scene_file(asset, &assets, asset_folder, &mut problems);
+        }
+    }
     if !problems.is_empty() {
         return Err(AssetBuildError::InvalidManifest {
             path: manifest_path.to_path_buf(),
@@ -223,6 +241,48 @@ fn check_manifest(
     }
     assets.sort_by(|a, b| a.name.cmp(&b.name));
     Ok(assets)
+}
+
+/// Checks the references in the scene file `scene`, against the manifest's
+/// `assets` and the IDs in the file itself (ADR 0026). A file that is
+/// missing was already reported.
+fn check_scene_file(
+    scene: &ManifestAsset,
+    assets: &[ManifestAsset],
+    asset_folder: &Path,
+    problems: &mut Vec<ManifestProblem>,
+) {
+    let Ok(text) = std::fs::read_to_string(asset_folder.join(&scene.path)) else {
+        return;
+    };
+    let references = match sfeg_core::scene_file::check_scene_file_text(&text) {
+        Ok(references) => references,
+        Err(error) => {
+            let mut message = error.to_string();
+            let mut source = error.source();
+            while let Some(cause) = source {
+                message.push_str(&format!(": {cause}"));
+                source = cause.source();
+            }
+            problems.push(ManifestProblem::InvalidSceneFile {
+                name: scene.name.clone(),
+                path: scene.path.clone(),
+                message,
+            });
+            return;
+        }
+    };
+    let mut reported: Vec<&str> = Vec::new();
+    for asset_name in &references.asset_names {
+        let known = assets.iter().any(|asset| asset.name == *asset_name);
+        if !known && !reported.contains(&asset_name.as_str()) {
+            reported.push(asset_name);
+            problems.push(ManifestProblem::UnknownAssetInSceneFile {
+                name: scene.name.clone(),
+                asset_name: asset_name.clone(),
+            });
+        }
+    }
 }
 
 /// Lowercase ASCII letters, digits, and underscores, starting with a
@@ -308,6 +368,7 @@ fn generate_code(manifest_path: &Path, assets: &[ManifestAsset]) -> String {
         let constant = asset.name.to_ascii_uppercase();
         let (kind_doc, kind_type) = match asset.kind {
             AssetKind::Texture => ("texture", "TextureAsset"),
+            AssetKind::SceneFile => ("scene file", "SceneFileAsset"),
         };
         // `{:?}` writes a valid Rust string literal, escapes included.
         code.push_str(&format!(
@@ -319,6 +380,23 @@ fn generate_code(manifest_path: &Path, assets: &[ManifestAsset]) -> String {
             path = asset.path,
         ));
     }
+    let list = |kind: AssetKind| -> String {
+        assets
+            .iter()
+            .filter(|asset| asset.kind == kind)
+            .map(|asset| asset.name.to_ascii_uppercase())
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    code.push_str(&format!(
+        "\n/// Every asset above, for `CoreSettings::asset_manifest`, so scene\n\
+         /// files can name them as `Asset(\"name\")`.\n\
+         #[allow(dead_code)]\n\
+         pub const MANIFEST: ::sfeg::assets::AssetManifest =\n    \
+         ::sfeg::assets::AssetManifest::from_manifest(&[{textures}], &[{scene_files}]);\n",
+        textures = list(AssetKind::Texture),
+        scene_files = list(AssetKind::SceneFile),
+    ));
     code
 }
 
@@ -336,6 +414,30 @@ pub enum ManifestProblem {
     DuplicateName {
         /// The name.
         name: String,
+    },
+    /// The name is `manifest`, which the generated `MANIFEST` constant
+    /// uses.
+    ReservedName {
+        /// The name.
+        name: String,
+    },
+    /// A scene file isn't valid: it doesn't parse, an `Asset(...)` or
+    /// `Object(...)` is malformed, two objects share an ID, or an
+    /// `Object("id")` names no ID in the file.
+    InvalidSceneFile {
+        /// The scene file's name.
+        name: String,
+        /// Its path.
+        path: String,
+        /// What is wrong, with its causes.
+        message: String,
+    },
+    /// A scene file's `Asset("name")` names nothing in the manifest.
+    UnknownAssetInSceneFile {
+        /// The scene file's name.
+        name: String,
+        /// The name it refers to.
+        asset_name: String,
     },
     /// The path uses `\`. Paths use `/` on every platform, so the manifest
     /// works everywhere.
@@ -372,6 +474,23 @@ impl fmt::Display for ManifestProblem {
             ),
             ManifestProblem::DuplicateName { name } => {
                 write!(f, "{name:?} is listed more than once")
+            }
+            ManifestProblem::ReservedName { name } => {
+                write!(
+                    f,
+                    "{name:?} is reserved for the generated MANIFEST constant"
+                )
+            }
+            ManifestProblem::InvalidSceneFile {
+                name,
+                path,
+                message,
+            } => write!(
+                f,
+                "{name:?}: the scene file {path:?} isn't valid: {message}"
+            ),
+            ManifestProblem::UnknownAssetInSceneFile { name, asset_name } => {
+                write!(f, "{name:?}: Asset({asset_name:?}) isn't in the manifest")
             }
             ManifestProblem::BackslashInPath { name, path } => {
                 write!(f, "{name:?}: {path:?} uses \\; use / between folders")
@@ -650,5 +769,119 @@ mod tests {
         assert!(code.contains(
             r#"::sfeg::assets::TextureAsset::from_manifest("player_idle", "textures/player \"idle\".png");"#
         ));
+    }
+
+    /// A fresh asset folder holding `files`, as (path, contents).
+    fn asset_folder_with(test_name: &str, files: &[(&str, &str)]) -> PathBuf {
+        let folder = asset_folder(test_name, &[]);
+        for (file, contents) in files {
+            let path = folder.join(file);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, contents).unwrap();
+        }
+        folder
+    }
+
+    #[test]
+    fn scene_files_are_checked_against_the_manifest_and_their_own_ids() {
+        let folder = asset_folder_with(
+            "scene_files",
+            &[
+                ("tree.png", ""),
+                (
+                    "good.ron",
+                    r#"(objects: [
+                        (type: "Walker", id: "w"),
+                        (type: "Door", data: (walker: Object("w"), look: Asset("tree"))),
+                    ])"#,
+                ),
+                (
+                    "unknown_asset.ron",
+                    r#"(objects: [(type: "Tree", data: (texture: Asset("bush"))),
+                                  (type: "Tree", data: (texture: Asset("bush")))])"#,
+                ),
+                (
+                    "unknown_id.ron",
+                    r#"(objects: [(type: "Door", data: (walker: Object("player")))])"#,
+                ),
+                (
+                    "duplicate_id.ron",
+                    r#"(objects: [(type: "A", id: "a"), (type: "B", id: "a")])"#,
+                ),
+            ],
+        );
+        let found = problems(
+            r#"{
+                "tree": Texture("tree.png"),
+                "good": SceneFile("good.ron"),
+                "unknown_asset": SceneFile("unknown_asset.ron"),
+                "unknown_id": SceneFile("unknown_id.ron"),
+                "duplicate_id": SceneFile("duplicate_id.ron"),
+            }"#,
+            &folder,
+        );
+        assert_eq!(found.len(), 3, "{found:#?}");
+        assert!(found.contains(&ManifestProblem::UnknownAssetInSceneFile {
+            name: "unknown_asset".into(),
+            asset_name: "bush".into(),
+        }));
+        let invalid: Vec<String> = found
+            .iter()
+            .filter_map(|problem| match problem {
+                ManifestProblem::InvalidSceneFile { name, message, .. } => {
+                    Some(format!("{name}: {message}"))
+                }
+                _ => None,
+            })
+            .collect();
+        assert!(
+            invalid
+                .iter()
+                .any(|m| m.starts_with("unknown_id") && m.contains("\"player\"")),
+            "{invalid:?}"
+        );
+        assert!(
+            invalid
+                .iter()
+                .any(|m| m.starts_with("duplicate_id") && m.contains("\"a\"")),
+            "{invalid:?}"
+        );
+    }
+
+    #[test]
+    fn manifest_is_a_reserved_name() {
+        let folder = asset_folder("reserved", &["a.png"]);
+        assert_eq!(
+            problems(r#"{ "manifest": Texture("a.png") }"#, &folder),
+            [ManifestProblem::ReservedName {
+                name: "manifest".into()
+            }]
+        );
+    }
+
+    #[test]
+    fn the_generated_manifest_lists_every_asset_by_kind() {
+        let asset = |name: &str, kind| ManifestAsset {
+            name: name.into(),
+            kind,
+            path: format!("{name}.x"),
+        };
+        let code = generate_code(
+            Path::new("assets.ron"),
+            &[
+                asset("meadow", AssetKind::SceneFile),
+                asset("rock", AssetKind::Texture),
+                asset("tree", AssetKind::Texture),
+            ],
+        );
+        assert!(code.contains(
+            "pub const MEADOW: ::sfeg::assets::SceneFileAsset =\n    \
+             ::sfeg::assets::SceneFileAsset::from_manifest(\"meadow\", \"meadow.x\");"
+        ));
+        assert!(
+            code.contains(
+                "::sfeg::assets::AssetManifest::from_manifest(&[ROCK, TREE], &[MEADOW]);"
+            )
+        );
     }
 }
