@@ -27,6 +27,29 @@ pub mod capture {
     };
 }
 
+/// Scene files: scenes written as data (ADR 0014, 0026). See
+/// [`sfeg_core::scene_file`].
+pub mod scene_file {
+    pub use sfeg_core::scene_file::*;
+    /// Lets scene files name a game object type:
+    /// `#[sfeg::scene_file_object(name = "Door")]` on the type. It also
+    /// derives `Deserialize` for the type's fields, so `#[serde(...)]`
+    /// attributes such as `skip` and `default` work on them.
+    pub use sfeg_macros::scene_file_object;
+    /// Lets scene files name a scene state type:
+    /// `#[sfeg::scene_file_state(name = "Level")]` on the type. It also
+    /// derives `Deserialize` for the type's fields, so `#[serde(...)]`
+    /// attributes such as `skip` and `default` work on them.
+    pub use sfeg_macros::scene_file_state;
+}
+
+pub use sfeg_macros::{scene_file_object, scene_file_state};
+
+/// The serde version SFEG reads scene files with. The scene file macros
+/// derive `Deserialize` through it, so games don't depend on serde
+/// themselves.
+pub use serde;
+
 /// Input actions (ADR 0016). See [`sfeg_core::input`].
 pub mod input {
     pub use sfeg_core::input::*;

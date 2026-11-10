@@ -65,6 +65,8 @@ fn derived_actions_drive_a_game() {
             transform_interpolation: TransformInterpolation::Enabled,
             input_bindings: bindings,
             asset_folder: std::path::PathBuf::new(),
+            asset_manifest: sfeg::assets::AssetManifest::EMPTY,
+            scene_types: sfeg::scene_file::SceneTypeRegistry::new(),
         },
     );
     core.apply_input_event(InputEvent::KeyPressed(KeyCode::Space));

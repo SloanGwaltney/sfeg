@@ -1,8 +1,8 @@
 use std::any::Any;
 
 use crate::assets::{
-    AssetScope, AssetStore, ReleaseTextureError, ScopeLoadCounts, TextureAsset, TextureHandle,
-    TextureState,
+    AssetScope, AssetStore, ReleaseTextureError, SceneFileAsset, ScopeLoadCounts, TextureAsset,
+    TextureHandle, TextureState,
 };
 use crate::frame::FrameContext;
 use crate::game_object::GameObject;
@@ -14,6 +14,7 @@ use crate::scene::{Parent, Scene, TypedHandleError};
 use crate::scene_change::{
     BeginNextSceneError, NoNextSceneError, QueueSceneChangeError, QueuedSceneChange, SceneChange,
 };
+use crate::scene_file::SceneFileError;
 use crate::time::GameTime;
 
 /// The scene-wide state: one game-defined struct per scene, created with
@@ -142,9 +143,49 @@ impl<'a> SceneStateTickContext<'a> {
         self.scene_change.begin_next_scene(scene, self.assets)
     }
 
-    /// The next scene, or `None` if there is none.
+    /// Begins the next scene from a scene file (ADR 0026). The file is
+    /// read in the background while the current scene keeps running.
+    ///
+    /// The engine builds the scene when a tick ends after the file is read,
+    /// and starts loading every asset it refers to into the next scene's
+    /// scope. Until then, [`next_scene`](Self::next_scene) is `None` and
+    /// the scene can't be switched to. Wait until
+    /// [`next_scene_scope_load_counts`](Self::next_scene_scope_load_counts)
+    /// reports [`all_finished`](ScopeLoadCounts::all_finished), which
+    /// counts the file too, then switch.
+    ///
+    /// The engine never switches on its own. If the file fails to load or
+    /// build, [`next_scene_file_error`](Self::next_scene_file_error) says
+    /// why and the game discards it. The current scene keeps running.
+    ///
+    /// # Errors
+    ///
+    /// [`BeginNextSceneError::NextSceneExists`] if there already is a next
+    /// scene, built or not. Nothing is read.
+    pub fn begin_next_scene_from_file(
+        &mut self,
+        scene_file: SceneFileAsset,
+    ) -> Result<(), BeginNextSceneError> {
+        self.scene_change
+            .begin_next_scene_from_file(scene_file, self.assets)
+    }
+
+    /// Whether there is a next scene, including one whose file is still
+    /// loading or failed.
+    pub fn has_next_scene(&self) -> bool {
+        self.scene_change.has_next_scene()
+    }
+
+    /// The next scene, or `None` if there is none or its file isn't built
+    /// yet.
     pub fn next_scene(&self) -> Option<&Scene> {
         self.scene_change.next_scene()
+    }
+
+    /// Why the next scene's file couldn't be loaded or built, or `None` if
+    /// it hasn't failed (ADR 0026). The game discards a failed next scene.
+    pub fn next_scene_file_error(&self) -> Option<&SceneFileError> {
+        self.scene_change.next_scene_file_error()
     }
 
     /// The next scene, to build it, such as with
@@ -186,14 +227,14 @@ impl<'a> SceneStateTickContext<'a> {
         self.assets.queue_release(texture, scope)
     }
 
-    /// How the textures the next scene holds are doing.
+    /// How the assets the next scene holds are doing. A next scene from a
+    /// scene file counts the file too.
     ///
     /// # Errors
     ///
     /// [`NoNextSceneError`] if there is no next scene.
     pub fn next_scene_scope_load_counts(&self) -> Result<ScopeLoadCounts, NoNextSceneError> {
-        let scope = self.assets.next_scene_scope().ok_or(NoNextSceneError)?;
-        Ok(self.assets.scope_load_counts(scope))
+        self.scene_change.next_scene_scope_load_counts(self.assets)
     }
 
     /// Queues a switch to the next scene for when the tick ends. This
@@ -205,6 +246,8 @@ impl<'a> SceneStateTickContext<'a> {
     /// - [`QueueSceneChangeError::NoNextScene`] if there is no next scene.
     /// - [`QueueSceneChangeError::ChangeAlreadyQueued`] if a switch or
     ///   discard is already queued this tick.
+    /// - [`QueueSceneChangeError::NextSceneNotBuilt`] if the next scene's
+    ///   file is still loading or failed.
     pub fn switch_to_next_scene_deferred(&mut self) -> Result<(), QueueSceneChangeError> {
         self.scene_change
             .queue(QueuedSceneChange::SwitchToNextScene)
@@ -409,6 +452,8 @@ mod tests {
                 transform_interpolation: TransformInterpolation::Enabled,
                 input_bindings: InputBindings::none(),
                 asset_folder: std::path::PathBuf::new(),
+                asset_manifest: crate::assets::AssetManifest::EMPTY,
+                scene_types: crate::scene_file::SceneTypeRegistry::new(),
             },
         )
     }
@@ -480,6 +525,8 @@ mod tests {
                 transform_interpolation: TransformInterpolation::Enabled,
                 input_bindings: InputBindings::none(),
                 asset_folder: std::path::PathBuf::new(),
+                asset_manifest: crate::assets::AssetManifest::EMPTY,
+                scene_types: crate::scene_file::SceneTypeRegistry::new(),
             },
         );
         core.advance(Duration::ZERO);

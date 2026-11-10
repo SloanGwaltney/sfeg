@@ -1,5 +1,5 @@
-//! SFEG's derive macros. Games use them through the `sfeg` crate, such as
-//! `sfeg::input::Action`.
+//! SFEG's macros. Games use them through the `sfeg` crate, such as
+//! `sfeg::input::Action` and `sfeg::scene_file_object`.
 
 use proc_macro::TokenStream;
 use proc_macro2::Span;
@@ -113,4 +113,113 @@ fn is_valid_action_name(name: &str) -> bool {
     let mut chars = name.chars();
     chars.next().is_some_and(|first| first.is_ascii_lowercase())
         && chars.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
+}
+
+/// Lets scene files name a game object type (ADR 0014, 0026):
+///
+/// ```ignore
+/// #[sfeg::scene_file_object(name = "Door")]
+/// struct Door {
+///     walker: Handle<Walker>,
+/// }
+/// ```
+///
+/// It derives `Deserialize` for the type through `sfeg::serde`, so the
+/// type's fields are what a scene file writes under `data`, and
+/// `#[serde(...)]` attributes work on them. It implements
+/// `SceneFileObject` with `name`, which is never taken from the type name,
+/// so renaming the type never breaks files. Register the type with
+/// `SceneTypeRegistry::register_object`.
+///
+/// Put it above any `#[derive(...)]` on the type.
+#[proc_macro_attribute]
+pub fn scene_file_object(attribute: TokenStream, item: TokenStream) -> TokenStream {
+    expand_scene_file_type(attribute, item, quote!(::sfeg::scene_file::SceneFileObject))
+}
+
+/// Lets scene files name a scene state type (ADR 0014, 0026):
+///
+/// ```ignore
+/// #[sfeg::scene_file_state(name = "Level")]
+/// struct LevelState {
+///     level: Level,
+/// }
+/// ```
+///
+/// It derives `Deserialize` for the type through `sfeg::serde`, so the
+/// type's fields are what a scene file writes under the scene state's
+/// `data`, and `#[serde(...)]` attributes work on them. It implements
+/// `SceneFileState` with `name`, which is never taken from the type name.
+/// Register the type with `SceneTypeRegistry::register_scene_state`.
+///
+/// Put it above any `#[derive(...)]` on the type.
+#[proc_macro_attribute]
+pub fn scene_file_state(attribute: TokenStream, item: TokenStream) -> TokenStream {
+    expand_scene_file_type(attribute, item, quote!(::sfeg::scene_file::SceneFileState))
+}
+
+fn expand_scene_file_type(
+    attribute: TokenStream,
+    item: TokenStream,
+    naming_trait: proc_macro2::TokenStream,
+) -> TokenStream {
+    let mut name: Option<LitStr> = None;
+    let name_parser = syn::meta::parser(|meta| {
+        if meta.path.is_ident("name") {
+            if name.is_some() {
+                return Err(meta.error("`name` is given twice"));
+            }
+            name = Some(meta.value()?.parse()?);
+            Ok(())
+        } else {
+            Err(meta.error("expected `name = \"...\"`"))
+        }
+    });
+    parse_macro_input!(attribute with name_parser);
+    let input = parse_macro_input!(item as DeriveInput);
+
+    let result = (|| {
+        let Some(name) = name else {
+            return Err(syn::Error::new(
+                Span::call_site(),
+                "a scene file type needs an explicit `name = \"...\"` for scene files",
+            ));
+        };
+        if !is_valid_type_name(&name.value()) {
+            return Err(syn::Error::new_spanned(
+                &name,
+                "a scene file type name is ASCII letters, digits, and underscores, starting with a letter",
+            ));
+        }
+        if !input.generics.params.is_empty() {
+            return Err(syn::Error::new_spanned(
+                &input.generics,
+                "a scene file type can't be generic: each name is one concrete type",
+            ));
+        }
+        let ident = &input.ident;
+        Ok(quote! {
+            #[derive(::sfeg::serde::Deserialize)]
+            #[serde(crate = "::sfeg::serde")]
+            #input
+
+            impl #naming_trait for #ident {
+                const NAME: &'static str = #name;
+            }
+        })
+    })();
+    match result {
+        Ok(tokens) => tokens.into(),
+        Err(error) => error.to_compile_error().into(),
+    }
+}
+
+/// Whether `name` is ASCII letters, digits, and underscores, starting with
+/// a letter, such as `"Door"` or `"level_2_boss"`.
+fn is_valid_type_name(name: &str) -> bool {
+    let mut chars = name.chars();
+    chars
+        .next()
+        .is_some_and(|first| first.is_ascii_alphabetic())
+        && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
 }

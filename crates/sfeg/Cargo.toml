@@ -9,6 +9,7 @@ repository.workspace = true
 [dependencies]
 sfeg_core.workspace = true
 sfeg_macros.workspace = true
+serde = { version = "1.0.229", features = ["derive"] }
 sfeg_wgpu.workspace = true
 sfeg_winit.workspace = true
 
