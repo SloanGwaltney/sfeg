@@ -1,0 +1,67 @@
+// The meadow: two trees, and a door on the right edge of the floor.
+(
+    scene_state: (type: "Level", data: (level: Meadow, walker: Object("walker"))),
+    // Above and in front, tilted down toward the middle of the floor.
+    active_camera: (
+        object: Object("camera"),
+        projection: Perspective(vertical_fov_radians: 1.0471976, near: 0.1, far: 100.0),
+    ),
+    objects: [
+        (
+            type: "Floor",
+            transform: (
+                position: (x: 0.0, y: -0.55, z: 0.0),
+                scale: (x: 10.0, y: 0.1, z: 6.0),
+            ),
+            data: (level: Meadow),
+        ),
+        (
+            type: "Walker",
+            id: "walker",
+            data: (speed: 3.0, jump_speed: 6.0, gravity: 20.0, spin_speed: 1.5),
+            children: [
+                (
+                    type: "Hat",
+                    transform: (
+                        position: (x: 0.0, y: 0.75, z: 0.0),
+                        scale: (x: 0.5, y: 0.5, z: 0.5),
+                    ),
+                ),
+            ],
+        ),
+        // Just past the floor's edge, as tall as the walker with its hat.
+        (
+            type: "Door",
+            transform: (
+                position: (x: 5.2, y: 0.25, z: 0.0),
+                scale: (x: 0.2, y: 1.5, z: 1.5),
+            ),
+            data: (side: Right),
+        ),
+        // Two units tall, standing on the floor's top at y = -0.5.
+        (
+            type: "Tree",
+            transform: (
+                position: (x: -3.0, y: 0.5, z: -1.5),
+                scale: (x: 2.0, y: 2.0, z: 1.0),
+            ),
+            data: (texture: Asset("tree")),
+        ),
+        (
+            type: "Tree",
+            transform: (
+                position: (x: 3.2, y: 0.5, z: -2.0),
+                scale: (x: 2.0, y: 2.0, z: 1.0),
+            ),
+            data: (texture: Asset("tree")),
+        ),
+        (
+            type: "FixedCamera",
+            id: "camera",
+            transform: (
+                position: (x: 0.0, y: 3.0, z: 10.0),
+                rotation: (x: -0.14521314, y: 0.0, z: 0.0, w: 0.98940040),
+            ),
+        ),
+    ],
+)

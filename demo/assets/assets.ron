@@ -2,4 +2,6 @@
 // each asset's kind and file. Paths are relative to this folder.
 {
     "tree": Texture("textures/tree.png"),
+    "meadow": SceneFile("scenes/meadow.ron"),
+    "clearing": SceneFile("scenes/clearing.ron"),
 }
